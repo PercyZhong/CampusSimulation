@@ -1,60 +1,60 @@
-# Linux 集成验收（待实测）
+# Linux 集成验收记录
 
-本文件记录确切命令及待填写证据。当前开发环境为 Windows；**以下 Linux 项目尚未执行，均不标为通过**。本机尝试列出 WSL 发行版时返回 `Wsl/EnumerateDistros/Service/E_ACCESSDENIED`，无法借此完成 Linux 试跑。请使用 Linux 本地磁盘而非网络文件系统。
+## 环境与源码身份
 
-## 安装与身份
+- 系统：Ubuntu 20.04.6 LTS；Python 3.12.14，使用独立的 Conda 环境 `campus-sim-py312`。
+- Society0：通过 `pip install -e '.[dev]'` 从 Git SHA `6ba4a6284a8830491cf326fe9840c48c96c742fb` 构建并安装，版本 6.0.0。
+- 首轮模拟源码：`ca16f26de17344754285fae4cecb20324eb41be8`；修正压力规则后的正式模拟源码：`b2749accda57825f032d49d4581bc6524e9da3ae`。后续 `ad37a88` 只修正静态检查问题，`7527c60` 只加入真实结果示例。
+- 运行工件位于 Linux `/home/zpj/CampusSimulation/runs/`，由 `.gitignore` 排除。每个 `runner.json` 和 `summary.json` 记录 run ID、配置哈希及源码身份。
 
-```bash
-git rev-parse HEAD
-python3.12 --version
-python3.12 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -e '.[dev]'
-python -m pip freeze | grep -i society0
-python -m pytest -q
+## 实际执行与结果
+
+| 检查 | 实际结果 |
+| --- | --- |
+| 首次安装 | GitHub HTTPS 曾超时；网络恢复后固定 SHA 安装成功。Git HTTP/HTTPS 代理与代理环境变量均为空。 |
+| 首次 Linux 测试 | 4 passed、2 failed：Society0 要求文本主键显式 `NOT NULL`；在 `ca16f26` 修复并保留原失败事实。 |
+| 最终测试 | `python -m pytest -q`：7 passed；`python -m ruff check src tests`：All checks passed（在 `ad37a88` 后执行）。 |
+| 两天冒烟 | `runs/smoke-2d` 完成 2 步；Society0 Observation 显示 `failed=false`，从已完成 Results 读到 `s000/rest/completed`。此运行使用首轮压力规则。 |
+| 首轮 9 次实验 | `runs/experiment/` 下 9 个 run 均完成 30 步；第 30 天压力全为 1.0，判定为原规则的上限堆积失败模式，不作为条件比较依据。 |
+| 修正后 9 次实验 | 下列 9 个独立目录各完成 30 步，run ID 各异；第 30 天平均压力约 0.356–0.418，未再全部触顶。 |
+| 容量和对账 | 修正后 9×30 天每日 `served_today ≤ 3`；9 个 `events.jsonl` 的行动状态计数与 `comparison.json` 一致。 |
+| 恢复 | `runs/resumed-baseline-b2749ac` 从修正后 baseline/seed 11 的完整第 15 步恢复到第 30 步；`verify-resume` 返回 `{"equivalent":true,"steps":30}`。首轮规则的恢复和独立重跑也各自返回等价。 |
+| 耗时 | 修正后 9 个 run 的 `timings.jsonl` 共 270 条，`total_s` 合计 **31.49 秒**。这是模拟步骤耗时合计，不是安装或整批墙钟时间；后者未测量。 |
+| 导出资料 | 修正后 9 个 `events.jsonl` 的主体 ID 均属于 `s000`–`s039`，事件字段限于预期结构；完整输出的敏感资料人工复查仍待办。 |
+
+修正后 9 个运行目录：
+
+```text
+runs/experiment-b2749ac/baseline-seed11
+runs/experiment-b2749ac/baseline-seed22
+runs/experiment-b2749ac/baseline-seed33
+runs/experiment-b2749ac/outreach-seed11
+runs/experiment-b2749ac/outreach-seed22
+runs/experiment-b2749ac/outreach-seed33
+runs/experiment-b2749ac/easier_access-seed11
+runs/experiment-b2749ac/easier_access-seed22
+runs/experiment-b2749ac/easier_access-seed33
 ```
 
-应记录：OS/发行版 `待填`；Python `待填`；场景 SHA `待填`；Society0 SHA `6ba4a6284a8830491cf326fe9840c48c96c742fb（待安装核实）`；安装失败原文与代理状态 `待填`。如 GitHub 安装失败，检查 `git config --get http.proxy`、`git config --get https.proxy`、`env | grep -i proxy`，保留原始错误。
+真实运行示例为 [EXAMPLE_RESULT.json](EXAMPLE_RESULT.json)，从 `runs/experiment-b2749ac/baseline-seed11/summary.json` 直接复制；两份文件的 SHA-256 同为 `94fddd83157f676b789f4cefce0cb47966242c5f4ba9e59a42565c8285ca910a`。
 
-## 两天冒烟和只读观察
+## 可复现命令
+
+以下命令与实测路径对应；重跑时必须使用**新输出目录**，避免覆盖现有运行事实：
 
 ```bash
+python -m pytest -q
+python -m ruff check src tests
 python -m campus_sim.cli run --config configs/baseline.json --days 2 --output runs/smoke-2d
 python -m society0.kernel.observation runs/smoke-2d
-python -m campus_sim.cli export runs/smoke-2d
+python -m campus_sim.cli batch --configs configs --output runs/experiment-b2749ac
+python -m campus_sim.cli run --config configs/baseline.json --seed 11 --output runs/resumed-baseline-b2749ac --source runs/experiment-b2749ac/baseline-seed11 --step 15
+python -m campus_sim.cli verify-resume runs/experiment-b2749ac/baseline-seed11 runs/resumed-baseline-b2749ac
 ```
 
-验收：完成 2 步；`Observation` 可读；`campus_events` 至少一条完成动作；行动表与 `events.jsonl` 可对账。路径/结果/耗时：`待填`。
+## 待验收与解释边界
 
-## 九次实验与复现
-
-```bash
-python -m campus_sim.cli batch --configs configs --output runs/experiment
-python -m campus_sim.cli run --config configs/baseline.json --seed 11 --output runs/repeat-baseline-11
-python -m campus_sim.cli verify-resume runs/experiment/baseline-seed11 runs/repeat-baseline-11
-```
-
-九个预期路径：`runs/experiment/{baseline,outreach,easier_access}-seed{11,22,33}`。各需 30 完整步骤、独立目录；核对同种子逐日事实与指标相同，3 条件仅改变 `condition` 声明字段，人口/边/外部事件相同。`verify-resume` 也可对全程重跑核对。9 路径实录、总耗时、失败：`待填`。
-
-## 第 15 步恢复
-
-```bash
-python -m campus_sim.cli run --config configs/baseline.json --seed 11 --output runs/resumed-baseline-11 --source runs/experiment/baseline-seed11 --step 15
-python -m campus_sim.cli verify-resume runs/experiment/baseline-seed11 runs/resumed-baseline-11
-```
-
-验收：源目录未覆盖；分支完成第 30 步；逐日事实、事件与聚合值相同；故障后只能从完整步骤恢复。结果/失败原文：`待填`。
-
-## 统计、权限和审阅
-
-- 检查请求/支持比例分母为合成学生数，等待均值排除未完成请求；`served_total` 等于服务事件数与受支持人数；每日服务数 ≤ `capacity`。
-- 检查行动写入身份、重复请求、开放时间、同伴边和容量约束；主体信息只含本人状态与公共服务信息。结果中不得有姓名、学号、联系方式或密钥。
-- 记录零付费模型调用与零模型 HTTP 请求的实际运行证据；场景源码身份、配置哈希、引擎 SHA 与 run ID 在每个 `summary.json`/`runner.json` 可追溯。
-- 聚合方向不作为测试断言。专业人员对支持服务现实含义和参数的审阅：`待办`。
-
-首次 Linux `python -m pytest -q`：4 passed、2 failed；两个集成测试均在 Society0 `StageStore.create` 阶段因 `schema requires an explicit nonnull primary key` 失败，尚未执行模拟步骤。已将 `campus_students.id` 与 `campus_queue.actor` 的文本主键显式声明 `NOT NULL`；修复后结果待重跑。最初安装曾因 GitHub HTTPS 超时失败，网络恢复后固定 SHA 安装成功。
-
-最终测试结果 `待填`；成本/网络调用次数 `待填`；其他限制与失败 `待填`；真实运行简例（从输出生成，不手造）`待填`。
-
-固定提交 `ca16f26de17344754285fae4cecb20324eb41be8` 的后续实测：Linux Python 3.12.14；`python -m pytest -q` 为 6 passed；两天 run `runs/smoke-2d` 完成 2 步，Society0 Observation 读取到 `s000/rest/completed`；9 个 `runs/experiment/{condition}-seed{11,22,33}` 均完成 30 步且 run ID 不同；`runs/resumed-baseline-11` 从第 15 步恢复与连续运行等价；`runs/repeat-baseline-11` 重跑等价。首轮 9 个运行的第 30 天压力均为 `1.0`，该退化结果保留在原 run 目录中；新规则将写入新目录，不覆盖原结果。总耗时、成本与专业审阅仍待填。
+- `network_calls=0` 和 `paid_model_calls=0` 是规则后端的设计声明；没有独立网络流量计量或成本审计。模拟代码未配置模型服务或凭据。
+- 行动身份、队列和容量由插件写入时重检；容量已用 9×30 天工件核对。跨主体读取的拒绝路径、异常后只从完整步骤恢复，仍需专门的负向集成测试。
+- 等待均值只包含已服务请求，未完成请求单列。`outreach`、`easier_access` 的效果方向不作为测试断言。30 天内支持人数接近全部人口，压力适应项 `0.15` 均未经经验校准。
+- 校园专业人员对支持服务含义、开放时间、容量、参数及初始分层规则的审阅仍待办。不能将这些模型量用于真实学生诊断、个体自杀风险判断或实际政策效果预测。

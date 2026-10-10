@@ -4,7 +4,7 @@
 
 ## 环境与安装
 
-Society0 的正式运行合同面向 Linux/macOS 和 Python 3.12+。在 Linux **本地磁盘**目录执行：
+Society0 的正式运行合同面向 Linux/macOS 和 Python 3.12+。在 Linux **本地磁盘**目录执行；也可使用独立的 Python 3.12 Conda 环境：
 
 ```bash
 python3.12 -m venv .venv
@@ -18,7 +18,7 @@ python -m pytest -q
 
 ## 最小运行与实验
 
-先在 Linux 做两天烟测，命令由固定提交的 `runner-contract.md` 与 `rule_run.py` 核对；以下校园命令仍须在 Linux 实测验收：
+先在 Linux 做两天烟测，命令由固定提交的 `runner-contract.md` 与 `rule_run.py` 核对。以下命令已在 Ubuntu 20.04.6 / Python 3.12.14 实测；重跑时须更换 `--output` 目录：
 
 ```bash
 python -m campus_sim.cli run --config configs/baseline.json --days 2 --output runs/smoke-2d
@@ -33,6 +33,8 @@ python -m campus_sim.cli export runs/direct-baseline
 ```
 
 每个成功导出的目录有 `summary.json`、`daily_metrics.csv`、`events.jsonl`；批处理还有 `comparison.json`。汇总包含原始计数、分母、已完成请求的等待时间、未完成请求数、初始分层和三个种子的均值与范围。导出只读 Society0 `Observation` 的已完成步骤和权威 SQL 事实，失败目录会标记诊断状态。不会重新运行规则决策。
+
+[真实 Linux 运行示例](docs/EXAMPLE_RESULT.json)从 baseline/seed 11 的 `summary.json` 原样复制。修正压力规则后的 9 个实验及恢复验收记录见 [LINUX_ACCEPTANCE.md](docs/LINUX_ACCEPTANCE.md)。示例中的数值是未校准的模型内结果。
 
 ## 恢复对照
 
