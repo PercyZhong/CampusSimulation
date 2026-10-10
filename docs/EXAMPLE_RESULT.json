@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "run_id": "89ac5ec00a77421b92e0525a9e051b7f",
+  "status": "complete_steps_only",
+  "complete_steps": 30,
+  "scenario_git": "b2749accda57825f032d49d4581bc6524e9da3ae",
+  "society0_git": "6ba4a6284a8830491cf326fe9840c48c96c742fb",
+  "config_sha256": "44a481118964f30596ea61a34ac5947f4900df88199c758ebea67dcb0db1db16",
+  "condition": "baseline",
+  "seed": 11,
+  "n_students": 40,
+  "requested_count": 40,
+  "requested_denominator": 40,
+  "supported_count": 40,
+  "supported_denominator": 40,
+  "completed_wait_count": 40,
+  "completed_wait_mean_days": 4.05,
+  "pending_count": 0,
+  "pending_wait_excluded": 0,
+  "low_connection_7d_count": 20,
+  "low_connection_denominator": 40,
+  "stress_distribution": {
+    "min": 0.211631,
+    "mean": 0.38864567499999997,
+    "max": 0.498242,
+    "bins_0_to_1_by_0_2": [
+      0,
+      21,
+      19,
+      0,
+      0
+    ]
+  },
+  "initial_groups": {
+    "lower": {
+      "n": 29,
+      "supported": 29,
+      "support_rate": 1.0
+    },
+    "higher": {
+      "n": 11,
+      "supported": 11,
+      "support_rate": 1.0
+    }
+  },
+  "action_counts": {
+    "attend:completed": 414,
+    "request:completed": 40,
+    "peer:completed": 195,
+    "rest:completed": 170,
+    "accept_support:completed": 40,
+    "accept_support:rejected": 122,
+    "request:rejected": 219
+  },
+  "served_total": 40,
+  "network_calls": 0,
+  "paid_model_calls": 0,
+  "interpretation": "uncalibrated model-internal scenario result",
+  "requested_rate": 1.0,
+  "supported_rate": 1.0,
+  "low_connection_7d_rate": 0.5
+}
