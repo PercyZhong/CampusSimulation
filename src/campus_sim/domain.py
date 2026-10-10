@@ -51,6 +51,12 @@ def academic_event(seed, day):
     return round(0.04 + 0.12 * unit(seed, "academic_event", day), 6)
 
 
+def next_stress(stress, recovery, load, supported):
+    """Daily workload and recovery with bounded adaptation to sustained load."""
+    return clamp(stress + load - 0.055 * recovery -
+                 (0.025 if supported else 0) - 0.15 * stress)
+
+
 def action_choice(student, day, config):
     sid = student["id"]
     if student["pending_day"] is not None:

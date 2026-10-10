@@ -5,7 +5,7 @@ import json
 from society0.kernel.plugins import Plugin
 from society0.kernel.interaction import Action, ActionResult, DocumentChunk, Ref
 
-from .domain import academic_event, clamp
+from .domain import academic_event, clamp, next_stress
 from .population import make_population
 
 
@@ -129,7 +129,8 @@ class Campus:
                 state = json.loads(body)
                 if state["pending_day"] is not None and day > state["pending_day"]:
                     state["wait_days"] += 1
-                state["stress"] = clamp(state["stress"] + load - 0.055 * state["recovery"] - (0.025 if state["supported"] else 0))
+                state["stress"] = next_stress(state["stress"], state["recovery"],
+                                               load, state["supported"])
                 state["recovery"] = clamp(state["recovery"] - 0.025)
                 state["connection"] = clamp(state["connection"] - 0.012)
                 state["low_streak"] = state["low_streak"] + 1 if state["connection"] < 0.3 else 0

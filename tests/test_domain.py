@@ -2,7 +2,7 @@ from dataclasses import replace
 
 import pytest
 
-from campus_sim.domain import Config, academic_event, action_choice, unit
+from campus_sim.domain import Config, academic_event, action_choice, next_stress, unit
 from campus_sim.population import make_population
 
 
@@ -38,3 +38,10 @@ def test_policy_does_not_shift_external_schedule():
                     for day in range(1, 31)]
     student = make_population(base)[0][0]
     assert action_choice(student, 1, base) in {"attend", "rest", "peer", "request"}
+
+
+def test_sustained_workload_retains_stress_range():
+    stress = 0.5
+    for _ in range(30):
+        stress = next_stress(stress, recovery=0.3, load=0.1, supported=False)
+    assert 0.4 < stress < 0.9
