@@ -6,7 +6,6 @@ from pathlib import Path
 
 from society0.kernel.observation import Observation
 
-
 SCHEMA_VERSION = 1
 
 

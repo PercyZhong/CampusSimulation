@@ -2,12 +2,11 @@
 
 import json
 
-from society0.kernel.plugins import Plugin
 from society0.kernel.interaction import Action, ActionResult, DocumentChunk, Ref
+from society0.kernel.plugins import Plugin
 
 from .domain import academic_event, clamp, next_stress
 from .population import make_population
-
 
 SCHEMA = (
     "CREATE TABLE campus_students(id TEXT NOT NULL PRIMARY KEY, body TEXT NOT NULL)",

@@ -1,10 +1,10 @@
 """Importable synchronous Society0 plan factory."""
 
-from dataclasses import asdict
 import hashlib
 import json
 import subprocess
 import sys
+from dataclasses import asdict
 
 from society0.kernel.actors import ActorRecord, actor_plugin
 from society0.kernel.drivers import rule_driver_plugin

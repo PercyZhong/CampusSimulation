@@ -1,8 +1,8 @@
 """Portable model rules. Values are synthetic model state, not clinical measures."""
 
-from dataclasses import dataclass
 import hashlib
 import json
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True)

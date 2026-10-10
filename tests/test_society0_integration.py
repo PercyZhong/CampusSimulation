@@ -2,6 +2,7 @@
 
 import json
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -10,12 +11,14 @@ pytestmark = pytest.mark.skipif(sys.platform != "linux", reason="Society0 POSIX 
 
 def test_two_day_completed_action_and_export(tmp_path):
     import asyncio
-    from campus_sim.analysis import export
-    from campus_sim.plan import build
+
     from society0.kernel.observation import Observation
     from society0.kernel.runner import run_plan
 
-    raw = json.loads(open("configs/baseline.json", encoding="utf-8").read())
+    from campus_sim.analysis import export
+    from campus_sim.plan import build
+
+    raw = json.loads(Path("configs/baseline.json").read_text(encoding="utf-8"))
     raw.update(end=2, n_students=4)
     path = tmp_path / "two-day"
     result = asyncio.run(run_plan(path, build(raw)))
@@ -33,11 +36,13 @@ def test_two_day_completed_action_and_export(tmp_path):
 
 def test_repetition_and_completed_step_resume(tmp_path):
     import asyncio
-    from campus_sim.analysis import summarize, verify_resume
-    from campus_sim.plan import build
+
     from society0.kernel.runner import run_plan
 
-    raw = json.loads(open("configs/baseline.json", encoding="utf-8").read())
+    from campus_sim.analysis import summarize, verify_resume
+    from campus_sim.plan import build
+
+    raw = json.loads(Path("configs/baseline.json").read_text(encoding="utf-8"))
     raw.update(end=5, n_students=5)
     first, second, resumed = (tmp_path / name for name in ("first", "second", "resumed"))
     asyncio.run(run_plan(first, build(raw)))
