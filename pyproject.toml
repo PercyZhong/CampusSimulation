@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "campus-simulation"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["society0 @ git+https://github.com/lavapapa/society0.git@6ba4a6284a8830491cf326fe9840c48c96c742fb"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[project.scripts]
+campus-sim = "campus_sim.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = ["integration: requires Society0 on Linux"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100

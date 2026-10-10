@@ -1,0 +1,8 @@
+.venv/
+.society0-source/
+runs/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+.env

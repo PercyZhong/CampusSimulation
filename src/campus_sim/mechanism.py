@@ -1,0 +1,212 @@
+"""Society0 owned campus facts and actor bound actions."""
+
+import json
+
+from society0.kernel.plugins import Plugin
+from society0.kernel.interaction import Action, ActionResult, DocumentChunk, Ref
+
+from .domain import academic_event, clamp
+from .population import make_population
+
+
+SCHEMA = (
+    "CREATE TABLE campus_students(id TEXT PRIMARY KEY, body TEXT NOT NULL)",
+    "CREATE TABLE campus_edges(a TEXT NOT NULL,b TEXT NOT NULL,PRIMARY KEY(a,b))",
+    "CREATE TABLE campus_queue(actor TEXT PRIMARY KEY, requested_day INTEGER NOT NULL, ordinal INTEGER NOT NULL UNIQUE)",
+    "CREATE TABLE campus_service_usage(day INTEGER PRIMARY KEY, used INTEGER NOT NULL)",
+    "CREATE TABLE campus_events(ordinal INTEGER PRIMARY KEY,day INTEGER NOT NULL,actor TEXT NOT NULL,action TEXT NOT NULL,status TEXT NOT NULL,reason TEXT,detail TEXT NOT NULL)",
+    "CREATE TABLE campus_days(day INTEGER PRIMARY KEY,body TEXT NOT NULL)",
+)
+
+
+def dumps(value):
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+
+class Campus:
+    def __init__(self, store, config):
+        self.store, self.config = store, config
+
+    def student(self, actor):
+        def read(view):
+            rows = view.query("SELECT body FROM campus_students WHERE id=?", (actor,), max_rows=1)
+            return json.loads(rows[0][0]) if rows else None
+        return self.store.read(read)
+
+    def students(self):
+        return self.store.read(lambda view: [json.loads(row[0]) for row in
+            view.iter_query("SELECT body FROM campus_students ORDER BY id")])
+
+    @staticmethod
+    def event(writer, day, actor, action, status, reason=None, detail=None):
+        writer.execute("INSERT INTO campus_events(day,actor,action,status,reason,detail) VALUES(?,?,?,?,?,?)",
+                       (day, actor, action, status, reason, dumps(detail or {})))
+
+    def prepare(self, day):
+        load = academic_event(self.config.seed, day)
+        def write(writer):
+            if self.config.condition == "outreach" and day == self.config.outreach_day:
+                # Every synthetic actor sees general service information; no private-state targeting.
+                for sid, body in list(writer.iter_query("SELECT id,body FROM campus_students ORDER BY id")):
+                    state = json.loads(body)
+                    state["outreach_seen"] = True
+                    writer.execute("UPDATE campus_students SET body=? WHERE id=?", (dumps(state), sid))
+                    self.event(writer, day, sid, "outreach_information", "completed")
+        self.store.transaction(write)
+        return load
+
+    def act(self, scope, target, action):
+        day, actor = scope.moment.time, scope.actor
+        if target.key != actor:
+            return ActionResult("rejected", {"reason": "wrong_actor"})
+        def write(writer):
+            rows = writer.query("SELECT body FROM campus_students WHERE id=?", (actor,), max_rows=1)
+            if not rows:
+                return {"status": "rejected", "reason": "unknown_actor"}
+            state = json.loads(rows[0][0])
+            reason = None
+            if action == "request" and state["pending_day"] is not None:
+                reason = "already_pending"
+            if action == "request" and state["supported"]:
+                reason = "already_supported"
+            if action == "request" and day % self.config.open_every != 0:
+                reason = "service_closed"
+            if action == "accept_support":
+                first = writer.query("SELECT actor FROM campus_queue ORDER BY requested_day,ordinal LIMIT 1")
+                used = writer.query("SELECT used FROM campus_service_usage WHERE day=?", (day,))
+                if state["pending_day"] is None:
+                    reason = "no_pending_request"
+                elif day % self.config.open_every != 0:
+                    reason = "service_closed"
+                elif not first or first[0][0] != actor:
+                    reason = "queue_turn"
+                elif used and used[0][0] >= self.config.capacity:
+                    reason = "capacity_full"
+            if action == "peer":
+                peers = writer.query("SELECT 1 FROM campus_edges WHERE a=? OR b=? LIMIT 1", (actor, actor))
+                if not peers:
+                    reason = "no_peer_edge"
+            if reason:
+                self.event(writer, day, actor, action, "rejected", reason)
+                return {"status": "rejected", "reason": reason}
+            if action == "request":
+                ordinal = writer.query("SELECT COALESCE(MAX(ordinal),0)+1 FROM campus_queue")[0][0]
+                writer.execute("INSERT INTO campus_queue VALUES(?,?,?)", (actor, day, ordinal))
+                state["pending_day"] = day
+                state["ever_requested"] = True
+            elif action == "accept_support":
+                wait = day - state["pending_day"]
+                state["pending_day"] = None
+                state["wait_days"] += 1 if wait else 0
+                state["supported"] = True
+                state["ever_supported"] = True
+                state["stress"] = clamp(state["stress"] - 0.1)
+                writer.execute("DELETE FROM campus_queue WHERE actor=?", (actor,))
+                writer.execute("INSERT INTO campus_service_usage VALUES(?,1) ON CONFLICT(day) DO UPDATE SET used=used+1", (day,))
+            elif action == "rest":
+                state["recovery"] = clamp(state["recovery"] + 0.09)
+            elif action == "peer":
+                state["connection"] = clamp(state["connection"] + 0.045)
+            elif action == "attend":
+                state["willingness"] = clamp(state["willingness"] + 0.005)
+            else:
+                reason = "unknown_action"
+                self.event(writer, day, actor, action, "rejected", reason)
+                return {"status": "rejected", "reason": reason}
+            writer.execute("UPDATE campus_students SET body=? WHERE id=?", (dumps(state), actor))
+            self.event(writer, day, actor, action, "completed",
+                       detail={"wait_days": wait} if action == "accept_support" else None)
+            return {"status": "completed", "action": action}
+        result = self.store.transaction(write)
+        return ActionResult(result["status"], result)
+
+    def settle(self, day, load):
+        def write(writer):
+            usage = writer.query("SELECT used FROM campus_service_usage WHERE day=?", (day,))
+            served = usage[0][0] if usage else 0
+            states = []
+            for actor, body in list(writer.iter_query("SELECT id,body FROM campus_students ORDER BY id")):
+                state = json.loads(body)
+                if state["pending_day"] is not None and day > state["pending_day"]:
+                    state["wait_days"] += 1
+                state["stress"] = clamp(state["stress"] + load - 0.055 * state["recovery"] - (0.025 if state["supported"] else 0))
+                state["recovery"] = clamp(state["recovery"] - 0.025)
+                state["connection"] = clamp(state["connection"] - 0.012)
+                state["low_streak"] = state["low_streak"] + 1 if state["connection"] < 0.3 else 0
+                writer.execute("UPDATE campus_students SET body=? WHERE id=?", (dumps(state), actor))
+                states.append(state)
+            metrics = {
+                "day": day, "academic_load": load, "requested": sum(s["ever_requested"] for s in states),
+                "supported": sum(s["ever_supported"] for s in states), "served_today": served,
+                "pending": sum(s["pending_day"] is not None for s in states),
+                "low_connection_7d": sum(s["low_streak"] >= 7 for s in states),
+                "mean_stress": round(sum(s["stress"] for s in states) / len(states), 6),
+            }
+            writer.execute("INSERT INTO campus_days VALUES(?,?)", (day, dumps(metrics)))
+            return metrics
+        return self.store.transaction(write)
+
+
+class CampusInformation:
+    def __init__(self, campus):
+        self.campus = campus
+
+    def ref(self, path):
+        parts = path.strip("/").split("/")
+        if len(parts) == 2 and parts[0] == "students":
+            return Ref("campus", "student", parts[1])
+        if path == "/service":
+            return Ref("campus", "service", "main")
+        if path == "/course":
+            return Ref("campus", "course", "main")
+        if len(parts) == 2 and parts[0] == "peers":
+            return Ref("campus", "peer", parts[1])
+        return None
+
+    def read(self, scope, path, *, offset=0, size=65536):
+        ref = self.ref(path)
+        if ref is None:
+            raise LookupError(path)
+        if ref.kind == "student":
+            state = self.campus.student(ref.key)
+            data = {key: state[key] for key in ("id", "stress", "recovery", "connection", "willingness",
+                                                  "supported", "pending_day", "outreach_seen")}
+        elif ref.kind == "service":
+            data = {"open": scope.moment.time % self.campus.config.open_every == 0,
+                    "capacity": self.campus.config.capacity}
+        elif ref.kind == "course":
+            data = {"day": scope.moment.time,
+                    "academic_load": academic_event(self.campus.config.seed, scope.moment.time)}
+        else:
+            data = {"peer_interactions_today": self.campus.store.read(lambda view: [row[0] for row in
+                view.iter_query("SELECT DISTINCT e.actor FROM campus_events e JOIN campus_edges t ON (t.a=? AND t.b=e.actor) OR (t.b=? AND t.a=e.actor) WHERE e.day=? AND e.action='peer' AND e.status='completed' ORDER BY e.actor",
+                                (ref.key, ref.key, scope.moment.time))])}
+        body = dumps(data).encode()
+        revision = self.campus.store.read(lambda view: view.live_revision)
+        return DocumentChunk(body[offset:offset + size], len(body),
+                             offset + size if offset + size < len(body) else None, revision, ref)
+
+
+def campus_plugin(config):
+    population, edges = make_population(config)
+    def initialize(writer):
+        for state in population:
+            writer.execute("INSERT INTO campus_students VALUES(?,?)", (state["id"], dumps(state)))
+        for a, b in edges:
+            writer.execute("INSERT OR IGNORE INTO campus_edges VALUES(?,?)", (a, b))
+    def install(context):
+        campus = Campus(context.require("storage", "store"), config)
+        information = context.require("interaction", "information")
+        actions = context.require("interaction", "actions")
+        information.mount("/students", CampusInformation(campus))
+        information.mount("/service", CampusInformation(campus))
+        information.mount("/course", CampusInformation(campus))
+        information.mount("/peers", CampusInformation(campus))
+        schema = {"type": "object", "properties": {}, "additionalProperties": False}
+        for name in ("attend", "rest", "peer", "request", "accept_support"):
+            actions.register(Action("campus." + name, ("campus", "student"), name, schema,
+                lambda scope, target, args, name=name: campus.act(scope, target, name),
+                available=lambda scope, target: target.key == scope.actor),
+                dependencies=("campus_students", "campus_queue", "campus_edges", "campus_service_usage"))
+        context.provide("campus", campus)
+    return Plugin("campus", ("storage", "interaction"), install, schema=SCHEMA, initialize=initialize)

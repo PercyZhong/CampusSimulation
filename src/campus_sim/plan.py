@@ -1,0 +1,74 @@
+"""Importable synchronous Society0 plan factory."""
+
+from dataclasses import asdict
+import hashlib
+import json
+import subprocess
+import sys
+
+from society0.kernel.actors import ActorRecord, actor_plugin
+from society0.kernel.drivers import rule_driver_plugin
+from society0.kernel.interaction import Ref, interaction_plugin
+from society0.kernel.results import results_plugin
+from society0.kernel.runner import RunContract, RunPlan
+from society0.kernel.runtime import DriverResult, runtime_plugin
+
+from . import SOCIETY0_SHA
+from .domain import Config, action_choice
+from .mechanism import campus_plugin
+from .schedule import campus_schedule_plugin
+
+
+def _git_sha():
+    try:
+        return subprocess.check_output(["git", "rev-parse", "HEAD"], text=True,
+                                       stderr=subprocess.DEVNULL).strip()
+    except (OSError, subprocess.CalledProcessError):
+        return "uncommitted"
+
+
+def build(raw):
+    config = Config.parse(raw)
+    ids = tuple(f"s{i:03d}" for i in range(config.n_students))
+
+    async def rule(session):
+        actor = session.actor.id
+        chunk = await session.information.read("/students/" + actor)
+        await session.information.read("/course")
+        await session.information.read("/service")
+        await session.information.read("/peers/" + actor)
+        state = json.loads(chunk.data)
+        action = action_choice(state, session.moment.time, config)
+        result = await session.actions.invoke("campus." + action,
+                                               Ref("campus", "student", actor), {})
+        return DriverResult("completed", {"action": action, "status": result.status,
+                                           "reason": (result.value or {}).get("reason")}, "rule")
+
+    def allows(scope, operation, target):
+        if target.namespace != "campus":
+            return False
+        if target.kind in {"service", "course"}:
+            return operation in {"discover", "read"}
+        return target.kind in {"student", "peer"} and target.key == scope.actor
+
+    plugins = [interaction_plugin(allows, access_dependencies=("campus_students",)), results_plugin(),
+               rule_driver_plugin(rule),
+               actor_plugin({"rule": ("rule_driver", "factory")},
+                            records=[ActorRecord(actor, "rule") for actor in ids]),
+               campus_plugin(config),
+               runtime_plugin(actor_service=("actors", "actors"),
+                              information=("interaction", "information"),
+                              actions=("interaction", "actions"), store=("storage", "store"),
+                              results=("results", "results"), max_activations=config.n_students),
+               campus_schedule_plugin(config, ids)]
+    public = asdict(config)
+    public["release"] = raw.get("release", {"scenario": "0.1.0"})
+    config_hash = hashlib.sha256(json.dumps(public, sort_keys=True,
+                                separators=(",", ":")).encode()).hexdigest()
+    return RunPlan(plugins, RunContract(
+        release={"scenario": "0.1.0", "scenario_git": _git_sha(), "society0_git": SOCIETY0_SHA},
+        dependencies={"python": sys.version.split()[0], "society0_git": SOCIETY0_SHA},
+        configuration={"plugins": {"campus": public}, "actors": list(ids), "models": {},
+                       "config_sha256": config_hash, "driver": "rule"},
+        time={"start": config.start, "end": config.end, "unit": "day"},
+        budgets={"max_activations": config.n_students, "http_requests": 0, "paid_model_calls": 0}))
