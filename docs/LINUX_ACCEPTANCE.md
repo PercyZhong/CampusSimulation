@@ -53,4 +53,6 @@ python -m campus_sim.cli verify-resume runs/experiment/baseline-seed11 runs/resu
 - 记录零付费模型调用与零模型 HTTP 请求的实际运行证据；场景源码身份、配置哈希、引擎 SHA 与 run ID 在每个 `summary.json`/`runner.json` 可追溯。
 - 聚合方向不作为测试断言。专业人员对支持服务现实含义和参数的审阅：`待办`。
 
-测试结果 `待填`；成本/网络调用次数 `待填`；限制与失败 `待填`；真实运行简例（从输出生成，不手造）`待填`。
+首次 Linux `python -m pytest -q`：4 passed、2 failed；两个集成测试均在 Society0 `StageStore.create` 阶段因 `schema requires an explicit nonnull primary key` 失败，尚未执行模拟步骤。已将 `campus_students.id` 与 `campus_queue.actor` 的文本主键显式声明 `NOT NULL`；修复后结果待重跑。最初安装曾因 GitHub HTTPS 超时失败，网络恢复后固定 SHA 安装成功。
+
+最终测试结果 `待填`；成本/网络调用次数 `待填`；其他限制与失败 `待填`；真实运行简例（从输出生成，不手造）`待填`。
