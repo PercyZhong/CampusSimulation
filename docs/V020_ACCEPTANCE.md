@@ -11,8 +11,8 @@
 
 | 检查 | 结果 |
 | --- | --- |
-| 测试 | `python -m pytest -q`：10 passed，1.31 秒（`4cd99b7`）。 |
-| 静态检查 | 初次 Ruff 报 `src/campus_sim/web.py` 导入块格式错误；修正后 `python -m ruff check src tests`：All checks passed，`git diff --check` 无输出。 |
+| 测试 | `python -m pytest -q`：最初 10 passed，1.31 秒（`4cd99b7`）；最终在 `eb94388` 复查为 10 passed，1.21 秒。 |
+| 静态检查 | 初次 Ruff 报 `src/campus_sim/web.py` 导入块格式错误；修正后以及 `eb94388` 最终复查，`python -m ruff check src tests` 均为 All checks passed，`git diff --check` 无输出。 |
 | 两天冒烟 | `runs/v020-smoke-2d`：`completed`、2 步、0 个诊断错误；40 名合成学生、2 名合成辅导员。结果含压力变化与情绪分布。 |
 | 3×3 实验 | `runs/v020-experiment` 生成 9 个独立运行与 `comparison.json`；每个运行完成 30 天，均包含新增指标。逐日 CSV 检查证实每次 `served_today ≤ 3`。 |
 | 恢复 | `runs/v020-resumed-baseline` 从 baseline/seed 11 第 15 个完整步骤恢复至第 30 步；`verify-resume` 返回 `{"equivalent": true, "steps": 30}`。 |
@@ -35,7 +35,7 @@
 
 ## 后续验收
 
-- 对 `4deabc8` 做最终 `pytest` 和 Ruff 复查。其后的源码变更也必须重新验收。
+- `eb94388` 之后的源码变更必须重新验收。
 - 对新版本工件生成逐文件哈希与异机归档，保留原始失败和运行记录。
 - 由校园专业人员审阅并校准规则，之后以新目录重跑实验。
 - 如需真正的 LLM 语言决策，另行实现适配器、调用预算和可复现实验；当前离线模板只演示接口。
