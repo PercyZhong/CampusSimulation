@@ -1,8 +1,8 @@
 # CampusSimulation
 
-## 本地平台（待 Linux 验收的 0.2.0 扩展）
+## 本地平台（0.2.0 原型）
 
-当前开发树增加了本地 Web 工作台、合成辅导员名册、独立情绪变量、压力前后变化指标和可替换的离线语言层。它们尚未完成 Linux 运行验收，旧版 `docs/EXAMPLE_RESULT.json` 与 `docs/LINUX_ACCEPTANCE.md` 仅证明 0.1.0 规则场景，不代表 0.2.0 结果。
+当前开发树增加了本地 Web 工作台、合成辅导员名册、独立情绪变量、压力前后变化指标和可替换的离线语言层。Linux 上已完成规则实验、恢复与 Web 页面技术验收，见 [0.2.0 验收记录](docs/V020_ACCEPTANCE.md)。旧版 `docs/EXAMPLE_RESULT.json` 与 `docs/LINUX_ACCEPTANCE.md` 仅对应 0.1.0 规则场景。
 
 在 Linux 的 Python 3.12 环境安装本仓库后，从仓库根目录启动：
 
@@ -17,7 +17,7 @@ python -m campus_sim.cli web --output runs/workbench --port 8765
 
 0.2.0 的合成辅导员只作为服务资源名册，尚不作为会决策的 Society0 主体；每人最多提供 3 个容量槽，配置容量不得超过总槽数。`mood` 是模型内部情绪变量，不是心理量表。新的压力变化指标是最终压力减初始压力。新版本参数、服务规则和语言模板仍待校园专业人员审阅。
 
-Linux 上应先以**新输出目录**运行两天烟测，再运行 3×3 正式实验并核对第 15 步恢复。通过后另写 0.2.0 验收记录，不覆盖旧版记录：
+复跑时使用**新输出目录**。本轮执行过的命令与结果详见 0.2.0 验收记录：
 
 ```bash
 python -m campus_sim.cli run --config configs/baseline.json --days 2 --output runs/v020-smoke-2d
