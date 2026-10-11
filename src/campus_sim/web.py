@@ -8,7 +8,9 @@ import threading
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
+
+from .event_view import read_events
 
 CONDITIONS = ("baseline", "outreach", "easier_access")
 SEEDS = (11, 22, 33)
@@ -20,11 +22,16 @@ PAGE = """<!doctype html><html lang="zh"><meta charset="utf-8"><meta name="viewp
 <div class="box"><h2>已有运行</h2><button onclick="refresh()">刷新</button><div id="jobs"></div><table><thead><tr><th>名称</th><th>条件</th><th>天数</th><th>求助率</th><th>支持率</th><th>等待天数</th></tr></thead><tbody id="runs"></tbody></table></div>
 <div class="box"><h2>批处理结果</h2><div id="batches">暂无结果。</div></div>
 <div class="box"><h2>选中运行</h2><div id="detail">请选择一个运行。</div><canvas id="chart" width="900" height="260"></canvas></div>
+<div class="box"><h2>行动轨迹</h2><p>仅显示合成主体的导出事件。每页最多 100 条。</p><label>模拟日 <input id="eventDay" type="number" min="1" max="30" placeholder="全部"></label><label>行动 <select id="eventAction"><option value="">全部</option><option>attend</option><option>rest</option><option>peer</option><option>request</option><option>accept_support</option><option>outreach_information</option></select></label><button onclick="loadEvents(0)">筛选</button><p id="eventStatus">请选择一个运行。</p><table><thead><tr><th>日</th><th>主体</th><th>行动</th><th>状态</th><th>原因或详情</th></tr></thead><tbody id="events"></tbody></table><button onclick="previousEvents()">上一页</button><button onclick="nextEvents()">下一页</button></div>
 <script>
 const j=async u=>{const r=await fetch(u);if(!r.ok)throw Error(await r.text());return r.json()};
 const pct=x=>x==null?'—':(100*x).toFixed(1)+'%';
+let selectedRun=null,eventOffset=0,eventTotal=0;
 async function refresh(){try{let data=await j('/api/runs');let body=document.getElementById('runs');body.replaceChildren();for(let x of data.runs){let tr=document.createElement('tr');let values=[x.name,x.condition,x.complete_steps,pct(x.requested_rate),pct(x.supported_rate),x.completed_wait_mean_days==null?'—':x.completed_wait_mean_days.toFixed(2)];for(let v of values){let td=document.createElement('td');td.textContent=v;tr.append(td)}tr.style.cursor='pointer';tr.onclick=()=>show(x.name);body.append(tr)}document.getElementById('jobs').textContent=data.jobs.map(x=>x.name+'：'+x.status+(x.error?'（查看服务器状态文件）':'')).join('；');let b=document.getElementById('batches');b.replaceChildren();for(let run of data.batches){let p=document.createElement('p');p.textContent=run.name+'：'+run.status;b.append(p);if(run.by_condition){let table=document.createElement('table');let h=document.createElement('tr');for(let label of ['条件','平均求助率','平均支持率','平均等待天数','平均持续低联结率']){let th=document.createElement('th');th.textContent=label;h.append(th)}table.append(h);for(let [condition,m] of Object.entries(run.by_condition)){let tr=document.createElement('tr');for(let value of [condition,pct(m.requested_rate.mean),pct(m.supported_rate.mean),m.completed_wait_mean_days.mean?.toFixed(2)??'—',pct(m.low_connection_7d_rate.mean)]){let td=document.createElement('td');td.textContent=value;tr.append(td)}table.append(tr)}b.append(table)}}}catch(e){document.getElementById('message').textContent=e.message}}
-async function show(name){let x=await j('/api/runs/'+name);let d=document.getElementById('detail');d.textContent=`${x.summary.condition} · seed ${x.summary.seed} · ${x.summary.complete_steps} 天 · 持续低联结 ${pct(x.summary.low_connection_7d_rate)} · 压力均值 ${x.summary.stress_distribution.mean.toFixed(3)} · 压力平均变化 ${x.summary.stress_change_distribution?.mean?.toFixed(3)??'旧版无数据'}`;let c=document.getElementById('chart'),ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);let days=x.days;if(!days.length)return;ctx.strokeStyle='#1756a9';ctx.lineWidth=3;ctx.beginPath();days.forEach((p,i)=>{let X=35+i*(c.width-55)/Math.max(1,days.length-1),Y=230-p.mean_stress*195;i?ctx.lineTo(X,Y):ctx.moveTo(X,Y)});ctx.stroke();ctx.fillStyle='#172337';ctx.fillText('逐日平均压力（模型变量）',35,22);ctx.fillText('0',10,230);ctx.fillText('1',10,35)}
+async function show(name){selectedRun=name;eventOffset=0;loadEvents(0);let x=await j('/api/runs/'+name);let d=document.getElementById('detail');d.textContent=`${x.summary.condition} · seed ${x.summary.seed} · ${x.summary.complete_steps} 天 · 持续低联结 ${pct(x.summary.low_connection_7d_rate)} · 压力均值 ${x.summary.stress_distribution.mean.toFixed(3)} · 压力平均变化 ${x.summary.stress_change_distribution?.mean?.toFixed(3)??'旧版无数据'}`;let c=document.getElementById('chart'),ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);let days=x.days;if(!days.length)return;ctx.strokeStyle='#1756a9';ctx.lineWidth=3;ctx.beginPath();days.forEach((p,i)=>{let X=35+i*(c.width-55)/Math.max(1,days.length-1),Y=230-p.mean_stress*195;i?ctx.lineTo(X,Y):ctx.moveTo(X,Y)});ctx.stroke();ctx.fillStyle='#172337';ctx.fillText('逐日平均压力（模型变量）',35,22);ctx.fillText('0',10,230);ctx.fillText('1',10,35)}
+async function loadEvents(offset){if(!selectedRun)return;try{let params=new URLSearchParams({offset:String(offset),limit:'50'});let day=document.getElementById('eventDay').value,action=document.getElementById('eventAction').value;if(day)params.set('day',day);if(action)params.set('action',action);let data=await j('/api/runs/'+selectedRun+'/events?'+params);eventOffset=data.offset;eventTotal=data.total;let body=document.getElementById('events');body.replaceChildren();for(let x of data.events){let tr=document.createElement('tr');for(let v of [x.day,x.actor,x.action,x.status,x.reason??JSON.stringify(x.detail??{})]){let td=document.createElement('td');td.textContent=String(v);tr.append(td)}body.append(tr)}document.getElementById('eventStatus').textContent=`${data.total} 条匹配事件；显示 ${data.total?data.offset+1:0}–${Math.min(data.total,data.offset+data.events.length)}`;}catch(e){document.getElementById('eventStatus').textContent=e.message}}
+function previousEvents(){loadEvents(Math.max(0,eventOffset-50))}
+function nextEvents(){if(eventOffset+50<eventTotal)loadEvents(eventOffset+50)}
 async function launch(){let m=document.getElementById('message');try{let r=await fetch('/api/runs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({condition:document.getElementById('condition').value,seed:Number(document.getElementById('seed').value),days:Number(document.getElementById('days').value)})});let x=await r.json();if(!r.ok)throw Error(x.error);m.textContent='已启动 '+x.name+'；请稍后刷新。';}catch(e){m.textContent=e.message}}refresh();
 async function launchBatch(){let m=document.getElementById('message');try{let r=await fetch('/api/batches',{method:'POST'});let x=await r.json();if(!r.ok)throw Error(x.error);m.textContent='已启动 '+x.name+'；请稍后刷新。'}catch(e){m.textContent=e.message}}
 </script></html>"""
@@ -64,7 +71,8 @@ def create_handler(root):
         def do_GET(self):
             if not self.allowed_host():
                 return self.send_data(403, {"error": "loopback host required"})
-            path = urlsplit(self.path).path
+            parsed = urlsplit(self.path)
+            path = parsed.path
             if path == "/":
                 return self.send_data(200, PAGE, "text/html; charset=utf-8")
             if path == "/api/runs":
@@ -103,6 +111,27 @@ def create_handler(root):
                     except (ValueError, OSError):
                         continue
                 return self.send_data(200, {"runs": runs, "batches": batches, "jobs": jobs})
+            event_match = re.fullmatch(r"/api/runs/([a-zA-Z0-9_/-]+)/events", path)
+            if event_match:
+                parts = event_match[1].split("/")
+                if len(parts) not in (1, 2) or not all(
+                    RUN_NAME.fullmatch(part) for part in parts
+                ):
+                    return self.send_data(404, {"error": "run not found"})
+                try:
+                    query = parse_qs(parsed.query, strict_parsing=True)
+                    if set(query) - {"day", "action", "offset", "limit"}:
+                        raise ValueError("unknown event filter")
+                    day = int(query["day"][0]) if "day" in query else None
+                    action = query["action"][0] if "action" in query else None
+                    offset = int(query.get("offset", ["0"])[0])
+                    limit = int(query.get("limit", ["50"])[0])
+                    return self.send_data(200, read_events(root.joinpath(*parts),
+                        day=day, action=action, offset=offset, limit=limit))
+                except (ValueError, KeyError) as error:
+                    return self.send_data(400, {"error": str(error)})
+                except OSError:
+                    return self.send_data(404, {"error": "run not found"})
             match = re.fullmatch(r"/api/runs/([a-zA-Z0-9_/-]+)", path)
             parts = match[1].split("/") if match else []
             if parts and len(parts) <= 2 and all(RUN_NAME.fullmatch(part) for part in parts):
