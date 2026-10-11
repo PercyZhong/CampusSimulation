@@ -29,11 +29,17 @@ def test_two_day_completed_action_and_export(tmp_path):
             "SELECT actor,action,status FROM campus_events WHERE day<=2 ORDER BY ordinal")))
         usage = observation.reader.read(lambda view: list(view.iter_query(
             "SELECT day,used FROM campus_service_usage ORDER BY day")))
+        shifts = observation.reader.read(lambda view: list(view.iter_query(
+            "SELECT day,actor,slots FROM campus_staff_shifts ORDER BY day,actor")))
     assert any(status == "completed" for _, _, status in actions)
     assert all(used <= raw["capacity"] for _, used in usage)
+    assert len(shifts) == raw["end"] * raw["n_staff"]
+    assert all(slots == 3 for _, _, slots in shifts)
     assert export(path)["complete_steps"] == 2
     summary = export(path)
     assert summary["n_staff"] == 2
+    assert summary["staff_shift_count"] == raw["end"] * raw["n_staff"]
+    assert summary["available_slots_total"] == raw["end"] * raw["capacity"]
     assert -1 <= summary["stress_change_distribution"]["mean"] <= 1
     assert 0 <= summary["mood_distribution"]["mean"] <= 1
 
@@ -71,6 +77,16 @@ def test_actor_visibility_and_action_rechecks(tmp_path):
         async with compose(tmp_path / "permissions", build(raw).plugins) as host:
             information = host.service("interaction", "information")
             actions = host.service("interaction", "actions")
+            with InteractionScope("c000", Moment(1, "staff_shift")) as scope:
+                own_shift = await actions.bound(scope).invoke(
+                    "campus.staff_shift", Ref("campus", "staff", "c000"), {})
+                repeat_shift = await actions.bound(scope).invoke(
+                    "campus.staff_shift", Ref("campus", "staff", "c000"), {})
+                other_shift = await actions.bound(scope).invoke(
+                    "campus.staff_shift", Ref("campus", "staff", "c001"), {})
+                assert own_shift.status == "completed"
+                assert repeat_shift.status == "rejected"
+                assert other_shift.status == "rejected"
             with InteractionScope("s000", Moment(1, "decide")) as scope:
                 own = await information.bound(scope).read("/students/s000")
                 assert json.loads(own.data)["id"] == "s000"
@@ -92,6 +108,10 @@ def test_actor_visibility_and_action_rechecks(tmp_path):
                     result = await actions.bound(scope).invoke(
                         "campus.request", Ref("campus", "student", actor), {})
                     assert result.status == "completed"
+            with InteractionScope("c000", Moment(2, "staff_shift")) as scope:
+                shift = await actions.bound(scope).invoke(
+                    "campus.staff_shift", Ref("campus", "staff", "c000"), {})
+                assert shift.status == "completed"
             outcomes = []
             for actor in ("s000", "s001", "s002", "s003"):
                 with InteractionScope(actor, Moment(2, "decide")) as scope:

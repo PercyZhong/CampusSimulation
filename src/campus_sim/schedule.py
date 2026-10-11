@@ -8,7 +8,7 @@ from society0.kernel.runtime import Phase
 from society0.kernel.schedule import SequenceSchedule, activate
 
 
-def campus_schedule_plugin(config, actor_ids):
+def campus_schedule_plugin(config, actor_ids, staff_ids):
     def install(context):
         campus = context.require("campus", "campus")
         current = {}
@@ -17,6 +17,11 @@ def campus_schedule_plugin(config, actor_ids):
             day = phase.moment.time
             current["load"] = campus.prepare(day)
             return StepResult(metrics={"academic_load": current["load"]})
+
+        async def staff_shift(phase):
+            results = await activate(phase, staff_ids)
+            return StepResult(metrics={"staff_shifts": len(results)}, tables={"staff_actions": (
+                {"actor": item.actor_id, **item.result.value} for item in results)})
 
         async def decide(phase):
             results = await activate(phase, actor_ids)
@@ -34,5 +39,6 @@ def campus_schedule_plugin(config, actor_ids):
             return StepResult(metrics=metrics, tables={"events": events})
 
         context.provide("schedule", SequenceSchedule(range(config.start, config.end + 1),
-            (Phase("prepare", prepare), Phase("decide", decide), Phase("settle", settle))))
+            (Phase("prepare", prepare), Phase("staff_shift", staff_shift),
+             Phase("decide", decide), Phase("settle", settle))))
     return Plugin("schedule", ("campus", "runtime"), install)

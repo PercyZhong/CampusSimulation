@@ -12,6 +12,8 @@ from .population import make_population, make_staff
 SCHEMA = (
     "CREATE TABLE campus_students(id TEXT NOT NULL PRIMARY KEY, body TEXT NOT NULL)",
     "CREATE TABLE campus_staff(id TEXT NOT NULL PRIMARY KEY, body TEXT NOT NULL)",
+    "CREATE TABLE campus_staff_shifts(day INTEGER NOT NULL,actor TEXT NOT NULL,"
+    "slots INTEGER NOT NULL,PRIMARY KEY(day,actor))",
     "CREATE TABLE campus_edges(a TEXT NOT NULL,b TEXT NOT NULL,PRIMARY KEY(a,b))",
     "CREATE TABLE campus_queue(actor TEXT NOT NULL PRIMARY KEY, requested_day INTEGER NOT NULL, ordinal INTEGER NOT NULL UNIQUE)",
     "CREATE TABLE campus_service_usage(day INTEGER PRIMARY KEY, used INTEGER NOT NULL)",
@@ -38,6 +40,32 @@ class Campus:
     def students(self):
         return self.store.read(lambda view: [json.loads(row[0]) for row in
             view.iter_query("SELECT body FROM campus_students ORDER BY id")])
+
+    def available_slots(self, view, day):
+        rows = view.query("SELECT COALESCE(SUM(slots),0) FROM campus_staff_shifts WHERE day=?",
+                          (day,))
+        return min(self.config.capacity, rows[0][0])
+
+    def staff_shift(self, scope, target):
+        day, actor = scope.moment.time, scope.actor
+        if target.key != actor:
+            return ActionResult("rejected", {"reason": "wrong_actor"})
+
+        def write(writer):
+            rows = writer.query("SELECT body FROM campus_staff WHERE id=?", (actor,), max_rows=1)
+            if not rows:
+                return {"status": "rejected", "reason": "unknown_staff"}
+            existing = writer.query(
+                "SELECT 1 FROM campus_staff_shifts WHERE day=? AND actor=?", (day, actor))
+            if existing:
+                return {"status": "rejected", "reason": "already_on_shift"}
+            slots = json.loads(rows[0][0])["slots_per_day"]
+            writer.execute("INSERT INTO campus_staff_shifts VALUES(?,?,?)", (day, actor, slots))
+            self.event(writer, day, actor, "staff_shift", "completed", detail={"slots": slots})
+            return {"status": "completed", "slots": slots}
+
+        result = self.store.transaction(write)
+        return ActionResult(result["status"], result)
 
     @staticmethod
     def event(writer, day, actor, action, status, reason=None, detail=None):
@@ -82,7 +110,7 @@ class Campus:
                     reason = "service_closed"
                 elif not first or first[0][0] != actor:
                     reason = "queue_turn"
-                elif used and used[0][0] >= self.config.capacity:
+                elif (used[0][0] if used else 0) >= self.available_slots(writer, day):
                     reason = "capacity_full"
             if action == "peer":
                 peers = writer.query("SELECT 1 FROM campus_edges WHERE a=? OR b=? LIMIT 1", (actor, actor))
@@ -130,6 +158,9 @@ class Campus:
         def write(writer):
             usage = writer.query("SELECT used FROM campus_service_usage WHERE day=?", (day,))
             served = usage[0][0] if usage else 0
+            available = self.available_slots(writer, day)
+            if served > available:
+                raise ValueError("service usage exceeds registered staff slots")
             states = []
             for actor, body in list(writer.iter_query("SELECT id,body FROM campus_students ORDER BY id")):
                 state = json.loads(body)
@@ -147,6 +178,7 @@ class Campus:
             metrics = {
                 "day": day, "academic_load": load, "requested": sum(s["ever_requested"] for s in states),
                 "supported": sum(s["ever_supported"] for s in states), "served_today": served,
+                "available_slots": available,
                 "pending": sum(s["pending_day"] is not None for s in states),
                 "low_connection_7d": sum(s["low_streak"] >= 7 for s in states),
                 "mean_stress": round(sum(s["stress"] for s in states) / len(states), 6),
@@ -185,7 +217,9 @@ class CampusInformation:
                                                   "supported", "pending_day", "outreach_seen")}
         elif ref.kind == "service":
             data = {"open": scope.moment.time % self.campus.config.open_every == 0,
-                    "capacity": self.campus.config.capacity}
+                    "capacity": self.campus.config.capacity,
+                    "available_slots": self.campus.store.read(lambda view:
+                        self.campus.available_slots(view, scope.moment.time))}
         elif ref.kind == "course":
             data = {"day": scope.moment.time,
                     "academic_load": academic_event(self.campus.config.seed, scope.moment.time)}
@@ -223,5 +257,9 @@ def campus_plugin(config):
                 lambda scope, target, args, name=name: campus.act(scope, target, name),
                 available=lambda scope, target: target.key == scope.actor),
                 dependencies=("campus_students", "campus_queue", "campus_edges", "campus_service_usage"))
+        actions.register(Action("campus.staff_shift", ("campus", "staff"), "staff_shift", schema,
+            lambda scope, target, args: campus.staff_shift(scope, target),
+            available=lambda scope, target: target.key == scope.actor),
+            dependencies=("campus_staff", "campus_staff_shifts"))
         context.provide("campus", campus)
     return Plugin("campus", ("storage", "interaction"), install, schema=SCHEMA, initialize=initialize)

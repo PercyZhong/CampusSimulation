@@ -30,9 +30,15 @@ def _git_sha():
 def build(raw):
     config = Config.parse(raw)
     ids = tuple(f"s{i:03d}" for i in range(config.n_students))
+    staff_ids = tuple(f"c{i:03d}" for i in range(config.n_staff))
 
     async def rule(session):
         actor = session.actor.id
+        if actor in staff_ids:
+            result = await session.actions.invoke("campus.staff_shift",
+                Ref("campus", "staff", actor), {})
+            return DriverResult("completed", {"action": "staff_shift",
+                "status": result.status}, "rule")
         chunk = await session.information.read("/students/" + actor)
         await session.information.read("/course")
         await session.information.read("/service")
@@ -49,26 +55,30 @@ def build(raw):
             return False
         if target.kind in {"service", "course"}:
             return operation in {"discover", "read"}
-        return target.kind in {"student", "peer"} and target.key == scope.actor
+        return target.kind in {"student", "peer", "staff"} and target.key == scope.actor
 
-    plugins = [interaction_plugin(allows, access_dependencies=("campus_students",)), results_plugin(),
+    plugins = [interaction_plugin(allows,
+               access_dependencies=("campus_students", "campus_staff")), results_plugin(),
                rule_driver_plugin(rule),
                actor_plugin({"rule": ("rule_driver", "factory")},
-                            records=[ActorRecord(actor, "rule") for actor in ids]),
+                            records=[ActorRecord(actor, "rule") for actor in (*staff_ids, *ids)]),
                campus_plugin(config),
                runtime_plugin(actor_service=("actors", "actors"),
                               information=("interaction", "information"),
                               actions=("interaction", "actions"), store=("storage", "store"),
-                              results=("results", "results"), max_activations=config.n_students),
-               campus_schedule_plugin(config, ids)]
+                              results=("results", "results"),
+                              max_activations=config.n_students + config.n_staff),
+               campus_schedule_plugin(config, ids, staff_ids)]
     public = asdict(config)
-    public["release"] = raw.get("release", {"scenario": "0.2.0"})
+    public["release"] = raw.get("release", {"scenario": "0.3.0"})
     config_hash = hashlib.sha256(json.dumps(public, sort_keys=True,
                                 separators=(",", ":")).encode()).hexdigest()
     return RunPlan(plugins, RunContract(
-        release={"scenario": "0.2.0", "scenario_git": _git_sha(), "society0_git": SOCIETY0_SHA},
+        release={"scenario": "0.3.0", "scenario_git": _git_sha(), "society0_git": SOCIETY0_SHA},
         dependencies={"python": sys.version.split()[0], "society0_git": SOCIETY0_SHA},
-        configuration={"plugins": {"campus": public}, "actors": list(ids), "models": {},
+        configuration={"plugins": {"campus": public},
+                       "actors": list((*staff_ids, *ids)), "models": {},
                        "config_sha256": config_hash, "driver": "rule"},
         time={"start": config.start, "end": config.end, "unit": "day"},
-        budgets={"max_activations": config.n_students, "http_requests": 0, "paid_model_calls": 0}))
+        budgets={"max_activations": config.n_students + config.n_staff,
+                 "http_requests": 0, "paid_model_calls": 0}))

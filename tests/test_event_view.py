@@ -20,3 +20,9 @@ def test_filtered_event_page_preserves_export_order(tmp_path):
     assert page["events"] == [events[3]]
     with pytest.raises(ValueError):
         read_events(tmp_path, limit=101)
+
+
+def test_staff_shift_is_a_filterable_action(tmp_path):
+    event = {"day": 1, "actor": "c000", "action": "staff_shift", "status": "completed"}
+    (tmp_path / "events.jsonl").write_text(json.dumps(event) + "\n", encoding="utf-8")
+    assert read_events(tmp_path, action="staff_shift")["events"] == [event]

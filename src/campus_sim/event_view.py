@@ -14,7 +14,8 @@ def read_events(run_dir, *, day=None, action=None, offset=0, limit=50):
     if day is not None and (type(day) is not int or day < 1):
         raise ValueError("day must be a positive integer")
     if action is not None and action not in {
-        "attend", "rest", "peer", "request", "accept_support", "outreach_information"
+        "attend", "rest", "peer", "request", "accept_support", "outreach_information",
+        "staff_shift"
     }:
         raise ValueError("unknown action")
 
