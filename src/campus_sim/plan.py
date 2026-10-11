@@ -77,7 +77,7 @@ def build(raw):
         release={"scenario": "0.3.0", "scenario_git": _git_sha(), "society0_git": SOCIETY0_SHA},
         dependencies={"python": sys.version.split()[0], "society0_git": SOCIETY0_SHA},
         configuration={"plugins": {"campus": public},
-                       "actors": list((*staff_ids, *ids)), "models": {},
+                       "actors": [*staff_ids, *ids], "models": {},
                        "config_sha256": config_hash, "driver": "rule"},
         time={"start": config.start, "end": config.end, "unit": "day"},
         budgets={"max_activations": config.n_students + config.n_staff,

@@ -12,8 +12,8 @@ from .population import make_population, make_staff
 SCHEMA = (
     "CREATE TABLE campus_students(id TEXT NOT NULL PRIMARY KEY, body TEXT NOT NULL)",
     "CREATE TABLE campus_staff(id TEXT NOT NULL PRIMARY KEY, body TEXT NOT NULL)",
-    "CREATE TABLE campus_staff_shifts(day INTEGER NOT NULL,actor TEXT NOT NULL,"
-    "slots INTEGER NOT NULL,PRIMARY KEY(day,actor))",
+    ("CREATE TABLE campus_staff_shifts(day INTEGER NOT NULL,actor TEXT NOT NULL,"
+     "slots INTEGER NOT NULL,PRIMARY KEY(day,actor))"),
     "CREATE TABLE campus_edges(a TEXT NOT NULL,b TEXT NOT NULL,PRIMARY KEY(a,b))",
     "CREATE TABLE campus_queue(actor TEXT NOT NULL PRIMARY KEY, requested_day INTEGER NOT NULL, ordinal INTEGER NOT NULL UNIQUE)",
     "CREATE TABLE campus_service_usage(day INTEGER PRIMARY KEY, used INTEGER NOT NULL)",
