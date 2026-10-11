@@ -5,7 +5,7 @@
 - Linux 仓库：`/home/zpj/CampusSimulation`；Conda 环境 `campus-sim-py312`，Python 3.12.14。
 - Society0 固定源码：`6ba4a6284a8830491cf326fe9840c48c96c742fb`。
 - 模拟运行的场景提交：`4cd99b7f327da49099992b67479ddc15d644dd3a`。后续 `e79daa2` 只修正 Web 模块导入空行；`4deabc8` 只将页面中的等待天数格式化为两位小数。后两次修改没有改变模拟规则。截图确认页面显示两位小数。
-- 本记录据 Linux 终端输出和浏览器截图填写。`runs/` 被 Git 忽略，工件留在 Linux 本机；没有对 0.2.0 工件建立异机归档。
+- 本记录据 Linux 终端输出和浏览器截图填写。`runs/` 被 Git 忽略。验收工件已从 Linux 复制到 Windows，并核对压缩包哈希。
 
 ## 已执行检查
 
@@ -36,6 +36,12 @@
 ## 后续验收
 
 - `eb94388` 之后的源码变更必须重新验收。
-- 对新版本工件生成逐文件哈希与异机归档，保留原始失败和运行记录。
 - 由校园专业人员审阅并校准规则，之后以新目录重跑实验。
 - 如需真正的 LLM 语言决策，另行实现适配器、调用预算和可复现实验；当前离线模板只演示接口。
+
+## 工件归档
+
+- Linux：`runs/archives/campus-simulation-v020-3efd7cb-acceptance.tar.gz`，包含 1399 个文件及内部 `MANIFEST.sha256`。Linux 端逐文件核对通过。
+- Windows 副本：`C:\Users\LGH\Desktop\zpj\CampusSimulation\runs\archives\campus-simulation-v020-3efd7cb-acceptance.tar.gz`，另有同名 `.sha256` 和 `campus-simulation-v020-3efd7cb-MANIFEST.sha256`。Windows 端核对压缩包 SHA-256 与 1399 行清单通过。
+- 压缩包 SHA-256：`0cfd90cc147e9829dd5ad14a0e499ff3a842cac3ca608327e85780bff8b6fa8c`。
+- 归档时 Web 服务已停止，两个工作台任务均为 `complete`。归档包含 `3efd7cb` 时的验收记录快照；本节归档说明写在归档完成之后。
