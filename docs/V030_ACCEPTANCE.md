@@ -23,4 +23,8 @@
 
 0.3.0 结果仍是未经经验校准的模型内情景结果。服务规则、值班数值、压力及联结参数和离线语言模板尚待校园专业人员审阅。离线模板不是 LLM；`network_calls=0` 是规则后端的设计声明，未做独立流量审计。不能用于真实学生的个体风险判断、诊断或政策效果预测。
 
-本记录尚未包含 0.3.0 工件归档及跨主机哈希核对；完成后补记。
+## 工件归档
+
+- Linux：`runs/archives/campus-simulation-v030-1b89e65-acceptance.tar.gz`，包含上述四个 `runs/v030-*` 目录及 `docs/V030_ACCEPTANCE.md` 在 `1b89e65` 时的快照，共 737 个文件，另含内部 `MANIFEST.sha256`。Linux 端逐文件哈希、内部与外部清单、压缩包 SHA-256 均核对通过。
+- Windows 副本：`C:\Users\LGH\Desktop\zpj\CampusSimulation\runs\archives\campus-simulation-v030-1b89e65-acceptance.tar.gz`，以及同名 `.sha256` 和 `campus-simulation-v030-1b89e65-MANIFEST.sha256`。Windows 端已核对压缩包 SHA-256 与 737 行外部清单；未在 Windows 端再次逐文件解包核对。
+- 压缩包 SHA-256：`63ae6116175fa68bc6c384c5af0b8419457dec605713f4e2bcc3eac32694a2cf`。归档时 Web 服务已停止，工作台唯一任务为 `complete`。本节写于归档完成后，因此压缩包内的文档快照不含本节。
