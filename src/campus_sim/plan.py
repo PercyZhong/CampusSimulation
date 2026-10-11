@@ -62,11 +62,11 @@ def build(raw):
                               results=("results", "results"), max_activations=config.n_students),
                campus_schedule_plugin(config, ids)]
     public = asdict(config)
-    public["release"] = raw.get("release", {"scenario": "0.1.0"})
+    public["release"] = raw.get("release", {"scenario": "0.2.0"})
     config_hash = hashlib.sha256(json.dumps(public, sort_keys=True,
                                 separators=(",", ":")).encode()).hexdigest()
     return RunPlan(plugins, RunContract(
-        release={"scenario": "0.1.0", "scenario_git": _git_sha(), "society0_git": SOCIETY0_SHA},
+        release={"scenario": "0.2.0", "scenario_git": _git_sha(), "society0_git": SOCIETY0_SHA},
         dependencies={"python": sys.version.split()[0], "society0_git": SOCIETY0_SHA},
         configuration={"plugins": {"campus": public}, "actors": list(ids), "models": {},
                        "config_sha256": config_hash, "driver": "rule"},

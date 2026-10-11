@@ -8,7 +8,10 @@ def make_population(config):
     for number in range(config.n_students):
         sid = f"s{number:03d}"
         connection = round(0.2 + 0.55 * unit(config.seed, "connection", sid), 6)
-        rows.append({"id": sid, "stress": round(0.25 + 0.4 * unit(config.seed, "stress", sid), 6),
+        stress = round(0.25 + 0.4 * unit(config.seed, "stress", sid), 6)
+        rows.append({"id": sid, "stress": stress,
+                     "initial_stress": stress,
+                     "mood": round(0.3 + 0.4 * unit(config.seed, "mood", sid), 6),
                      "recovery": round(0.35 + 0.5 * unit(config.seed, "recovery", sid), 6),
                      "connection": connection,
                      "willingness": round(0.2 + 0.6 * unit(config.seed, "willingness", sid), 6),
@@ -17,3 +20,9 @@ def make_population(config):
                      "outreach_seen": False, "initial_group": "lower" if connection < 0.475 else "higher"})
     edges = [(rows[i]["id"], rows[(i + 1) % len(rows)]["id"]) for i in range(len(rows))]
     return rows, edges
+
+
+def make_staff(config):
+    """Synthetic support staff who own service slots, never student records."""
+    return [{"id": f"c{i:03d}", "role": "counselor", "slots_per_day": 3}
+            for i in range(config.n_staff)]

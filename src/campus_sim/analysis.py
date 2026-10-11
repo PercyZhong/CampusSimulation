@@ -24,16 +24,18 @@ def _read(run_dir):
                           "SELECT ordinal,day,actor,action,status,reason,detail FROM campus_events WHERE day<=? ORDER BY ordinal", (complete,))]
             students = [json.loads(body) for body, in view.iter_query(
                 "SELECT body FROM campus_students ORDER BY id")]
-            return days, events, students
-        days, events, students = observation.reader.read(facts)
+            staff = [json.loads(body) for body, in view.iter_query(
+                "SELECT body FROM campus_staff ORDER BY id")]
+            return days, events, students, staff
+        days, events, students, staff = observation.reader.read(facts)
         if len(days) != complete:
             raise ValueError("complete step and daily facts disagree")
-        return status, days, events, students
+        return status, days, events, students, staff
 
 
 def summarize(run_dir):
     run_dir = Path(run_dir)
-    status, days, events, students = _read(run_dir)
+    status, days, events, students, staff = _read(run_dir)
     manifest = json.loads((run_dir / "runner.json").read_text(encoding="utf-8"))
     n = len(students)
     waits = [e["detail"]["wait_days"] for e in events if e["action"] == "accept_support" and e["status"] == "completed"]
@@ -55,7 +57,8 @@ def summarize(run_dir):
                "config_sha256": manifest["contract"]["configuration"]["config_sha256"],
                "condition": manifest["contract"]["configuration"]["plugins"]["campus"]["condition"],
                "seed": manifest["contract"]["configuration"]["plugins"]["campus"]["seed"],
-               "n_students": n, "requested_count": sum(s["ever_requested"] for s in students),
+               "n_students": n, "n_staff": len(staff),
+               "requested_count": sum(s["ever_requested"] for s in students),
                "requested_denominator": n, "supported_count": sum(s["ever_supported"] for s in students),
                "supported_denominator": n, "completed_wait_count": len(waits),
                "completed_wait_mean_days": sum(waits) / len(waits) if waits else None,
@@ -72,6 +75,13 @@ def summarize(run_dir):
                "network_calls": 0, "paid_model_calls": 0,
                "interpretation": "uncalibrated model-internal scenario result"}
     summary["requested_rate"] = summary["requested_count"] / n
+    if all("initial_stress" in s and "mood" in s for s in students):
+        changes = [s["stress"] - s["initial_stress"] for s in students]
+        moods = [s["mood"] for s in students]
+        summary["stress_change_distribution"] = {"min": min(changes),
+            "mean": sum(changes) / n, "max": max(changes)}
+        summary["mood_distribution"] = {"min": min(moods),
+            "mean": sum(moods) / n, "max": max(moods)}
     summary["supported_rate"] = summary["supported_count"] / n
     summary["low_connection_7d_rate"] = summary["low_connection_7d_count"] / n
     if summary["supported_count"] != summary["served_total"] or summary["supported_count"] != len(waits):

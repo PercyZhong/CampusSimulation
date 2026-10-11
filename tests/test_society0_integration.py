@@ -32,6 +32,10 @@ def test_two_day_completed_action_and_export(tmp_path):
     assert any(status == "completed" for _, _, status in actions)
     assert all(used <= raw["capacity"] for _, used in usage)
     assert export(path)["complete_steps"] == 2
+    summary = export(path)
+    assert summary["n_staff"] == 2
+    assert -1 <= summary["stress_change_distribution"]["mean"] <= 1
+    assert 0 <= summary["mood_distribution"]["mean"] <= 1
 
 
 def test_repetition_and_completed_step_resume(tmp_path):

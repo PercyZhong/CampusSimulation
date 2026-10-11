@@ -1,5 +1,31 @@
 # CampusSimulation
 
+## 本地平台（待 Linux 验收的 0.2.0 扩展）
+
+当前开发树增加了本地 Web 工作台、合成辅导员名册、独立情绪变量、压力前后变化指标和可替换的离线语言层。它们尚未完成 Linux 运行验收，旧版 `docs/EXAMPLE_RESULT.json` 与 `docs/LINUX_ACCEPTANCE.md` 仅证明 0.1.0 规则场景，不代表 0.2.0 结果。
+
+在 Linux 的 Python 3.12 环境安装本仓库后，从仓库根目录启动：
+
+```bash
+python -m pip install -e '.[dev]'
+python -m pytest -q
+python -m ruff check src tests
+python -m campus_sim.cli web --output runs/workbench --port 8765
+```
+
+工作台监听 `127.0.0.1:8765`，可启动单次或 3×3 批量运行，并查看已完成运行的逐日平均压力和条件汇总。远程 VS Code 可使用端口转发访问；不要将该无身份认证的开发服务绑定到公网。每次运行使用新目录，结果保存在被 Git 忽略的 `runs/workbench/`。旧归档保持原样。语言层目前只生成可复现的离线同伴交流示例文本，`language_backend` 仅接受 `offline`；它没有调用 LLM，也不控制行动资格、服务队列或容量。今后接入模型需单独实现适配器和验收。
+
+0.2.0 的合成辅导员只作为服务资源名册，尚不作为会决策的 Society0 主体；每人最多提供 3 个容量槽，配置容量不得超过总槽数。`mood` 是模型内部情绪变量，不是心理量表。新的压力变化指标是最终压力减初始压力。新版本参数、服务规则和语言模板仍待校园专业人员审阅。
+
+Linux 上应先以**新输出目录**运行两天烟测，再运行 3×3 正式实验并核对第 15 步恢复。通过后另写 0.2.0 验收记录，不覆盖旧版记录：
+
+```bash
+python -m campus_sim.cli run --config configs/baseline.json --days 2 --output runs/v020-smoke-2d
+python -m campus_sim.cli batch --configs configs --output runs/v020-experiment
+python -m campus_sim.cli run --config configs/baseline.json --seed 11 --output runs/v020-resumed-baseline --source runs/v020-experiment/baseline-seed11 --step 15
+python -m campus_sim.cli verify-resume runs/v020-experiment/baseline-seed11 runs/v020-resumed-baseline
+```
+
 基于 Society0 固定提交 `6ba4a6284a8830491cf326fe9840c48c96c742fb` 的合成校园规则场景。所有 ID 与状态都是虚构模型变量。输出仅称为**未校准的模型内情景结果**，不能用于真实学生诊断、个体自杀风险判断或实际干预效果评估。
 
 ## 环境与安装

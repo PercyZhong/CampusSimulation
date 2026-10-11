@@ -36,7 +36,14 @@ def main(argv=None):
     check = sub.add_parser("verify-resume")
     check.add_argument("original")
     check.add_argument("resumed")
+    web = sub.add_parser("web")
+    web.add_argument("--output", default="runs/workbench")
+    web.add_argument("--port", type=int, default=8765)
     args = parser.parse_args(argv)
+    if args.command == "web":
+        from .web import serve
+        serve(args.output, args.port)
+        return 0
     if args.command == "export":
         print(json.dumps(export(args.run_dir), ensure_ascii=False))
         return 0
@@ -69,6 +76,14 @@ def main(argv=None):
                                             "min": min(values) if values else None,
                                             "max": max(values) if values else None,
                                             "n_seeds": len(values)}
+        for metric in ("stress_change_distribution", "mood_distribution"):
+            values = [s[metric]["mean"] for s in subset if metric in s]
+            aggregate[condition][metric + "_mean"] = {
+                "mean": sum(values) / len(values) if values else None,
+                "min": min(values) if values else None,
+                "max": max(values) if values else None,
+                "n_seeds": len(values),
+            }
     comparison = {"schema_version": 1, "runs": summaries, "by_condition": aggregate,
                   "interpretation": "uncalibrated model-internal scenario results; three seeds imply no significance"}
     root.mkdir(parents=True, exist_ok=True)

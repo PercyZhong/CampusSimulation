@@ -16,6 +16,8 @@ class Config:
     open_every: int = 1
     access_barrier: float = 0.22
     outreach_day: int = 5
+    n_staff: int = 2
+    language_backend: str = "offline"
 
     @classmethod
     def parse(cls, raw):
@@ -23,13 +25,17 @@ class Config:
         if set(raw) - allowed:
             raise ValueError(f"unknown config keys: {sorted(set(raw) - allowed)}")
         value = cls(**{key: raw[key] for key in cls.__dataclass_fields__ if key in raw})
-        for key in ("start", "end", "n_students", "seed", "capacity", "open_every", "outreach_day"):
+        for key in ("start", "end", "n_students", "seed", "capacity", "open_every", "outreach_day", "n_staff"):
             if type(getattr(value, key)) is not int:
                 raise ValueError(f"{key} must be integer")
         if value.start != 1 or value.end < value.start or value.n_students < 1:
             raise ValueError("invalid time range or population")
         if value.capacity < 1 or value.open_every < 1 or value.outreach_day < 1:
             raise ValueError("invalid service settings")
+        if value.n_staff < 1 or value.capacity > value.n_staff * 3:
+            raise ValueError("capacity exceeds configured staff slots")
+        if value.language_backend not in {"offline"}:
+            raise ValueError("unsupported language backend")
         if value.condition not in {"baseline", "outreach", "easier_access"}:
             raise ValueError("unknown condition")
         if type(value.access_barrier) not in (int, float) or not 0 <= value.access_barrier <= 1:
@@ -55,6 +61,11 @@ def next_stress(stress, recovery, load, supported):
     """Daily workload and recovery with bounded adaptation to sustained load."""
     return clamp(stress + load - 0.055 * recovery -
                  (0.025 if supported else 0) - 0.15 * stress)
+
+
+def next_mood(mood, stress, recovery, connected):
+    """Synthetic affect variable; not a clinical score."""
+    return clamp(mood + 0.035 * recovery + (0.025 if connected else 0) - 0.06 * stress)
 
 
 def action_choice(student, day, config):

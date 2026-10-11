@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "campus-simulation"
-version = "0.1.0"
+version = "0.2.0"
 requires-python = ">=3.12"
 dependencies = ["society0 @ git+https://github.com/lavapapa/society0.git@6ba4a6284a8830491cf326fe9840c48c96c742fb"]
 

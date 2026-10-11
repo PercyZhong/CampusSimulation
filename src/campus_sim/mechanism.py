@@ -5,11 +5,13 @@ import json
 from society0.kernel.interaction import Action, ActionResult, DocumentChunk, Ref
 from society0.kernel.plugins import Plugin
 
-from .domain import academic_event, clamp, next_stress
-from .population import make_population
+from .domain import academic_event, clamp, next_mood, next_stress
+from .language import language_backend
+from .population import make_population, make_staff
 
 SCHEMA = (
     "CREATE TABLE campus_students(id TEXT NOT NULL PRIMARY KEY, body TEXT NOT NULL)",
+    "CREATE TABLE campus_staff(id TEXT NOT NULL PRIMARY KEY, body TEXT NOT NULL)",
     "CREATE TABLE campus_edges(a TEXT NOT NULL,b TEXT NOT NULL,PRIMARY KEY(a,b))",
     "CREATE TABLE campus_queue(actor TEXT NOT NULL PRIMARY KEY, requested_day INTEGER NOT NULL, ordinal INTEGER NOT NULL UNIQUE)",
     "CREATE TABLE campus_service_usage(day INTEGER PRIMARY KEY, used INTEGER NOT NULL)",
@@ -25,6 +27,7 @@ def dumps(value):
 class Campus:
     def __init__(self, store, config):
         self.store, self.config = store, config
+        self.language = language_backend(config.language_backend)
 
     def student(self, actor):
         def read(view):
@@ -113,8 +116,12 @@ class Campus:
                 self.event(writer, day, actor, action, "rejected", reason)
                 return {"status": "rejected", "reason": reason}
             writer.execute("UPDATE campus_students SET body=? WHERE id=?", (dumps(state), actor))
+            detail = ({"wait_days": wait} if action == "accept_support" else
+                      {"message": self.language.peer_message(seed=self.config.seed, day=day,
+                                                              actor=actor), "backend": "offline"}
+                      if action == "peer" else None)
             self.event(writer, day, actor, action, "completed",
-                       detail={"wait_days": wait} if action == "accept_support" else None)
+                       detail=detail)
             return {"status": "completed", "action": action}
         result = self.store.transaction(write)
         return ActionResult(result["status"], result)
@@ -130,6 +137,8 @@ class Campus:
                     state["wait_days"] += 1
                 state["stress"] = next_stress(state["stress"], state["recovery"],
                                                load, state["supported"])
+                state["mood"] = next_mood(state["mood"], state["stress"],
+                                          state["recovery"], state["connection"] >= 0.3)
                 state["recovery"] = clamp(state["recovery"] - 0.025)
                 state["connection"] = clamp(state["connection"] - 0.012)
                 state["low_streak"] = state["low_streak"] + 1 if state["connection"] < 0.3 else 0
@@ -141,6 +150,9 @@ class Campus:
                 "pending": sum(s["pending_day"] is not None for s in states),
                 "low_connection_7d": sum(s["low_streak"] >= 7 for s in states),
                 "mean_stress": round(sum(s["stress"] for s in states) / len(states), 6),
+                "mean_mood": round(sum(s["mood"] for s in states) / len(states), 6),
+                "mean_stress_change": round(sum(s["stress"] - s["initial_stress"]
+                                                 for s in states) / len(states), 6),
             }
             writer.execute("INSERT INTO campus_days VALUES(?,?)", (day, dumps(metrics)))
             return metrics
@@ -169,7 +181,7 @@ class CampusInformation:
             raise LookupError(path)
         if ref.kind == "student":
             state = self.campus.student(ref.key)
-            data = {key: state[key] for key in ("id", "stress", "recovery", "connection", "willingness",
+            data = {key: state[key] for key in ("id", "stress", "mood", "recovery", "connection", "willingness",
                                                   "supported", "pending_day", "outreach_seen")}
         elif ref.kind == "service":
             data = {"open": scope.moment.time % self.campus.config.open_every == 0,
@@ -189,9 +201,12 @@ class CampusInformation:
 
 def campus_plugin(config):
     population, edges = make_population(config)
+    staff = make_staff(config)
     def initialize(writer):
         for state in population:
             writer.execute("INSERT INTO campus_students VALUES(?,?)", (state["id"], dumps(state)))
+        for member in staff:
+            writer.execute("INSERT INTO campus_staff VALUES(?,?)", (member["id"], dumps(member)))
         for a, b in edges:
             writer.execute("INSERT OR IGNORE INTO campus_edges VALUES(?,?)", (a, b))
     def install(context):
