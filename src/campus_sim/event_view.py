@@ -3,7 +3,6 @@
 import json
 from pathlib import Path
 
-
 MAX_PAGE_SIZE = 100
 
 
