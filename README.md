@@ -1,6 +1,18 @@
 # CampusSimulation
 
-## 本地平台（0.3.0 开发版）
+## 本地平台（0.4.0 开发版）
+
+0.4.0 开发树加入学生 LLM 行动决策。实验者可在 Web 工作台选择离线规则或 DeepSeek、Qwen、OpenAI GPT、Gemini、Anthropic Claude 的 API，并可填写提供商支持的其他模型 ID。Claude Code 使用的 Claude 模型在这里通过 Anthropic API 调用；Claude Code 订阅本身不是 API 密钥。辅导员值班和服务资格、排队、容量继续由确定性校园规则执行。
+
+启动 Web 服务前，在 Linux 终端为所选提供商设置环境变量：DeepSeek 使用 `DEEPSEEK_API_KEY`，Qwen 使用 `DASHSCOPE_API_KEY`，OpenAI 使用 `OPENAI_API_KEY`，Gemini 使用 `GEMINI_API_KEY`，Anthropic 使用 `ANTHROPIC_API_KEY`。不要把密钥写入配置文件、命令行或 Git。Qwen 适配器使用阿里云百炼中国站兼容接口；其他地域或自定义网关需要另行配置适配器。Web 页面会显示密钥是否已配置，但不显示密钥值。模型建议列表只是示例，具体 ID 和 API 权限以各提供商账户为准。
+
+命令行示例（DeepSeek 两天、40 名学生，最多 80 次 API 调用）：
+
+```bash
+python -m campus_sim.cli run --config configs/baseline.json --days 2 --output runs/llm-deepseek-smoke --provider deepseek --model deepseek-chat --max-model-calls 80
+```
+
+每名学生每天最多触发一次行动决策调用。30 天、40 名学生的完整单次运行最多需要 1200 次调用；3×3 批量实验会产生 9 个独立运行，上限按每个运行计算。达到调用上限或 API 返回错误会使运行失败，避免悄悄改用规则行动。LLM 输出的行动仍会经过 Society0 校园插件校验；运行事件记录提供商、模型、动作和提供商返回的用量字段，密钥和完整模型回复不写入事件。`network_calls` 和 `paid_model_calls` 在汇总中统计已记录的成功决策，失败请求可能未计入。模型生成仍有随机性，即使将温度设为零，也不能据此假定跨次运行逐项一致。真实 API 尚待 Linux 端连接测试与实验验收。
 
 当前开发树包含本地 Web 工作台、合成辅导员值班行动、独立情绪变量、压力前后变化指标和可替换的离线语言层。0.3.0 的 Linux 规则实验、恢复与 Web 筛选技术验收见 [0.3.0 验收记录](docs/V030_ACCEPTANCE.md)；[0.2.0 验收记录](docs/V020_ACCEPTANCE.md)对应旧规则。`docs/EXAMPLE_RESULT.json` 与 `docs/LINUX_ACCEPTANCE.md` 仅对应 0.1.0 规则场景。
 

@@ -9,13 +9,22 @@ from .analysis import export, verify_resume
 from .plan import build
 
 
-def _config(path, seed=None, days=None):
+def _config(path, seed=None, days=None, provider=None, model=None, max_calls=None):
     config = json.loads(Path(path).read_text(encoding="utf-8"))
     if seed is not None:
         config["seed"] = seed
     if days is not None:
         config["end"] = days
+    if provider is not None:
+        config.update(driver="llm", model_provider=provider, model_id=model,
+                      max_model_calls=max_calls)
     return config
+
+
+def _model_options(parser):
+    parser.add_argument("--provider", choices=("deepseek", "qwen", "openai", "gemini", "anthropic"))
+    parser.add_argument("--model")
+    parser.add_argument("--max-model-calls", type=int)
 
 
 def main(argv=None):
@@ -28,9 +37,11 @@ def main(argv=None):
     run.add_argument("--days", type=int)
     run.add_argument("--source")
     run.add_argument("--step", type=int)
+    _model_options(run)
     batch = sub.add_parser("batch")
     batch.add_argument("--configs", default="configs")
     batch.add_argument("--output", default="runs/experiment")
+    _model_options(batch)
     analyzed = sub.add_parser("export")
     analyzed.add_argument("run_dir")
     check = sub.add_parser("verify-resume")
@@ -40,6 +51,11 @@ def main(argv=None):
     web.add_argument("--output", default="runs/workbench")
     web.add_argument("--port", type=int, default=8765)
     args = parser.parse_args(argv)
+    if args.command in {"run", "batch"}:
+        if args.provider is None and (args.model is not None or args.max_model_calls is not None):
+            parser.error("--model and --max-model-calls require --provider")
+        if args.provider is not None and (args.model is None or args.max_model_calls is None):
+            parser.error("--provider requires --model and --max-model-calls")
     if args.command == "web":
         from .web import serve
         serve(args.output, args.port)
@@ -52,7 +68,8 @@ def main(argv=None):
         return 0
     from society0.kernel.runner import run_plan
     if args.command == "run":
-        config = _config(args.config, args.seed, args.days)
+        config = _config(args.config, args.seed, args.days,
+                         args.provider, args.model, args.max_model_calls)
         result = asyncio.run(run_plan(args.output, build(config), source=args.source, step=args.step))
         print(json.dumps({"runner": result, "summary": export(args.output)}, ensure_ascii=False))
         return 0
@@ -60,7 +77,9 @@ def main(argv=None):
     summaries = []
     for condition in ("baseline", "outreach", "easier_access"):
         for seed in (11, 22, 33):
-            config = _config(Path(args.configs) / f"{condition}.json", seed)
+            config = _config(Path(args.configs) / f"{condition}.json", seed,
+                             provider=args.provider, model=args.model,
+                             max_calls=args.max_model_calls)
             path = root / f"{condition}-seed{seed}"
             asyncio.run(run_plan(path, build(config)))
             summaries.append(export(path))

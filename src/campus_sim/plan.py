@@ -16,6 +16,7 @@ from society0.kernel.runtime import DriverResult, runtime_plugin
 from . import SOCIETY0_SHA
 from .domain import Config, action_choice
 from .mechanism import campus_plugin
+from .models import ModelClient
 from .schedule import campus_schedule_plugin
 
 
@@ -31,6 +32,8 @@ def build(raw):
     config = Config.parse(raw)
     ids = tuple(f"s{i:03d}" for i in range(config.n_students))
     staff_ids = tuple(f"c{i:03d}" for i in range(config.n_staff))
+    model_client = (ModelClient(config.model_provider, config.model_id, config.max_model_calls)
+                    if config.driver == "llm" else None)
 
     async def rule(session):
         actor = session.actor.id
@@ -40,11 +43,19 @@ def build(raw):
             return DriverResult("completed", {"action": "staff_shift",
                 "status": result.status}, "rule")
         chunk = await session.information.read("/students/" + actor)
-        await session.information.read("/course")
-        await session.information.read("/service")
-        await session.information.read("/peers/" + actor)
+        course = await session.information.read("/course")
+        service = await session.information.read("/service")
+        peers = await session.information.read("/peers/" + actor)
         state = json.loads(chunk.data)
-        action = action_choice(state, session.moment.time, config)
+        if model_client is None:
+            action = action_choice(state, session.moment.time, config)
+        else:
+            action, usage = model_client.decide(
+                day=session.moment.time, student=state, course=json.loads(course.data),
+                service=json.loads(service.data), peers=json.loads(peers.data))
+            await session.actions.invoke("campus.model_decision", Ref("campus", "student", actor),
+                {"action": action, "provider": config.model_provider,
+                 "model": config.model_id, "usage": usage})
         result = await session.actions.invoke("campus." + action,
                                                Ref("campus", "student", actor), {})
         return DriverResult("completed", {"action": action, "status": result.status,
@@ -70,15 +81,17 @@ def build(raw):
                               max_activations=config.n_students + config.n_staff),
                campus_schedule_plugin(config, ids, staff_ids)]
     public = asdict(config)
-    public["release"] = raw.get("release", {"scenario": "0.3.0"})
+    public["release"] = raw.get("release", {"scenario": "0.4.0"})
     config_hash = hashlib.sha256(json.dumps(public, sort_keys=True,
                                 separators=(",", ":")).encode()).hexdigest()
     return RunPlan(plugins, RunContract(
-        release={"scenario": "0.3.0", "scenario_git": _git_sha(), "society0_git": SOCIETY0_SHA},
+        release={"scenario": "0.4.0", "scenario_git": _git_sha(), "society0_git": SOCIETY0_SHA},
         dependencies={"python": sys.version.split()[0], "society0_git": SOCIETY0_SHA},
         configuration={"plugins": {"campus": public},
-                       "actors": [*staff_ids, *ids], "models": {},
-                       "config_sha256": config_hash, "driver": "rule"},
+                       "actors": [*staff_ids, *ids], "models": (
+                           {config.model_provider: config.model_id} if model_client else {}),
+                       "config_sha256": config_hash, "driver": config.driver},
         time={"start": config.start, "end": config.end, "unit": "day"},
         budgets={"max_activations": config.n_students + config.n_staff,
-                 "http_requests": 0, "paid_model_calls": 0}))
+                 "http_requests": config.max_model_calls,
+                 "paid_model_calls": config.max_model_calls}))

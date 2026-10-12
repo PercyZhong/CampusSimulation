@@ -18,6 +18,10 @@ class Config:
     outreach_day: int = 5
     n_staff: int = 2
     language_backend: str = "offline"
+    driver: str = "rule"
+    model_provider: str | None = None
+    model_id: str | None = None
+    max_model_calls: int = 0
 
     @classmethod
     def parse(cls, raw):
@@ -36,6 +40,13 @@ class Config:
             raise ValueError("capacity exceeds configured staff slots")
         if value.language_backend not in {"offline"}:
             raise ValueError("unsupported language backend")
+        if value.driver not in {"rule", "llm"}:
+            raise ValueError("unsupported driver")
+        if value.driver == "llm":
+            from .models import validate
+            validate(value.model_provider, value.model_id, value.max_model_calls)
+        elif value.model_provider is not None or value.model_id is not None or value.max_model_calls:
+            raise ValueError("model settings require llm driver")
         if value.condition not in {"baseline", "outreach", "easier_access"}:
             raise ValueError("unknown condition")
         if type(value.access_barrier) not in (int, float) or not 0 <= value.access_barrier <= 1:

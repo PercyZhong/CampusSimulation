@@ -85,6 +85,13 @@ class Campus:
         self.store.transaction(write)
         return load
 
+    def model_decision(self, scope, target, detail):
+        if target.key != scope.actor:
+            return ActionResult("rejected", {"reason": "wrong_actor"})
+        self.store.transaction(lambda writer: self.event(
+            writer, scope.moment.time, scope.actor, "model_decision", "completed", detail=detail))
+        return ActionResult("completed", {"action": detail["action"]})
+
     def act(self, scope, target, action):
         day, actor = scope.moment.time, scope.actor
         if target.key != actor:
@@ -216,8 +223,12 @@ class CampusInformation:
             data = {key: state[key] for key in ("id", "stress", "mood", "recovery", "connection", "willingness",
                                                   "supported", "pending_day", "outreach_seen")}
         elif ref.kind == "service":
+            barrier = self.campus.config.access_barrier
+            if self.campus.config.condition == "easier_access":
+                barrier *= 0.45
             data = {"open": scope.moment.time % self.campus.config.open_every == 0,
                     "capacity": self.campus.config.capacity,
+                    "access_barrier": barrier,
                     "available_slots": self.campus.store.read(lambda view:
                         self.campus.available_slots(view, scope.moment.time))}
         elif ref.kind == "course":
@@ -261,5 +272,15 @@ def campus_plugin(config):
             lambda scope, target, args: campus.staff_shift(scope, target),
             available=lambda scope, target: target.key == scope.actor),
             dependencies=("campus_staff", "campus_staff_shifts"))
+        decision_schema = {"type": "object", "properties": {
+            "action": {"type": "string"}, "provider": {"type": "string"},
+            "model": {"type": "string"}, "usage": {"type": "object"}},
+            "required": ["action", "provider", "model", "usage"],
+            "additionalProperties": False}
+        actions.register(Action("campus.model_decision", ("campus", "student"),
+            "model_decision", decision_schema,
+            lambda scope, target, args: campus.model_decision(scope, target, args),
+            available=lambda scope, target: target.key == scope.actor),
+            dependencies=("campus_events",))
         context.provide("campus", campus)
     return Plugin("campus", ("storage", "interaction"), install, schema=SCHEMA, initialize=initialize)

@@ -72,8 +72,12 @@ def summarize(run_dir):
                                            for i in range(5)]},
                "initial_groups": groups, "action_counts": action_counts,
                "served_total": sum(d["served_today"] for d in days),
-               "network_calls": 0, "paid_model_calls": 0,
+               "network_calls": sum(e["action"] == "model_decision" for e in events),
+               "paid_model_calls": sum(e["action"] == "model_decision" for e in events),
                "interpretation": "uncalibrated model-internal scenario result"}
+    summary["driver"] = manifest["contract"]["configuration"].get("driver", "rule")
+    summary["model_provider"] = manifest["contract"]["configuration"]["plugins"]["campus"].get("model_provider")
+    summary["model_id"] = manifest["contract"]["configuration"]["plugins"]["campus"].get("model_id")
     summary["requested_rate"] = summary["requested_count"] / n
     if all("initial_stress" in s and "mood" in s for s in students):
         changes = [s["stress"] - s["initial_stress"] for s in students]
