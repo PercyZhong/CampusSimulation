@@ -12,7 +12,7 @@
 python -m campus_sim.cli run --config configs/baseline.json --days 2 --output runs/llm-deepseek-smoke --provider deepseek --model deepseek-chat --max-model-calls 80
 ```
 
-每名学生每天最多触发一次行动决策调用。30 天、40 名学生的完整单次运行最多需要 1200 次调用；3×3 批量实验会产生 9 个独立运行，上限按每个运行计算。达到调用上限或 API 返回错误会使运行失败，避免悄悄改用规则行动。LLM 输出的行动仍会经过 Society0 校园插件校验；运行事件记录提供商、模型、动作和提供商返回的用量字段，密钥和完整模型回复不写入事件。`network_calls` 和 `paid_model_calls` 在汇总中统计已记录的成功决策，失败请求可能未计入。模型生成仍有随机性，即使将温度设为零，也不能据此假定跨次运行逐项一致。真实 API 尚待 Linux 端连接测试与实验验收。
+每名学生每天至少需要一次行动决策请求。程序在运行前检查调用上限是否达到 `学生数 × 天数`；TLS 握手超时最多重试一次，重试也占用调用上限。因此 30 天、40 名学生至少需要 1200 次，若要留重试余量应设置更高上限；3×3 批量实验有 9 个独立运行，上限按每个运行计算。达到调用上限或 API 返回错误会使运行失败，避免悄悄改用规则行动。LLM 输出的行动仍会经过 Society0 校园插件校验；运行事件记录提供商、模型、动作和提供商返回的用量字段，密钥和完整模型回复不写入事件。`network_calls` 和 `paid_model_calls` 在汇总中统计已记录的成功决策，失败请求及 TLS 重试可能未计入。模型生成仍有随机性，即使将温度设为零，也不能据此假定跨次运行逐项一致。DeepSeek 与 Qwen 已完成小规模真实 API 验收，详见 [0.4.0 验收进度](docs/V040_ACCEPTANCE.md)。
 
 当前开发树包含本地 Web 工作台、合成辅导员值班行动、独立情绪变量、压力前后变化指标和可替换的离线语言层。0.3.0 的 Linux 规则实验、恢复与 Web 筛选技术验收见 [0.3.0 验收记录](docs/V030_ACCEPTANCE.md)；[0.2.0 验收记录](docs/V020_ACCEPTANCE.md)对应旧规则。`docs/EXAMPLE_RESULT.json` 与 `docs/LINUX_ACCEPTANCE.md` 仅对应 0.1.0 规则场景。
 

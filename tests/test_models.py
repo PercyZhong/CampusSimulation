@@ -3,7 +3,7 @@
 import pytest
 
 from campus_sim.domain import Config
-from campus_sim.models import ModelClient, _action, choices
+from campus_sim.models import HandshakeTimeout, ModelClient, _action, choices
 
 
 @pytest.mark.parametrize("provider,key_name", [
@@ -55,6 +55,26 @@ def test_model_configuration_and_response(monkeypatch):
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     with pytest.raises(ValueError, match="DEEPSEEK_API_KEY"):
         ModelClient("deepseek", "deepseek-chat", 1)
+    with pytest.raises(ValueError, match="at least 200"):
+        Config.parse({"end": 5, "n_students": 40, "driver": "llm",
+                      "model_provider": "qwen", "model_id": "qwen-plus",
+                      "max_model_calls": 199})
+
+
+def test_handshake_timeout_retries_once_within_call_limit(monkeypatch):
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "local-test-key")
+    attempts = []
+
+    def fake_post(url, headers, payload):
+        attempts.append(url)
+        if len(attempts) == 1:
+            raise HandshakeTimeout("model API TLS handshake timed out")
+        return {"choices": [{"message": {"content": '{"action":"rest"}'}}]}
+
+    monkeypatch.setattr("campus_sim.models._post", fake_post)
+    client = ModelClient("qwen", "qwen-plus", 2)
+    action, _ = client.decide(day=1, student={}, course={}, service={}, peers={})
+    assert action == "rest" and client.calls == len(attempts) == 2
 
 
 def test_llm_actor_run_records_decisions_without_live_network(monkeypatch, tmp_path):

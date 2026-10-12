@@ -21,6 +21,10 @@ OPENAI_COMPATIBLE = {
 }
 
 
+class HandshakeTimeout(RuntimeError):
+    """The TLS handshake failed before an HTTP request could be sent."""
+
+
 def choices():
     return {name: {"models": info["models"], "key_env": info["env"],
                    "configured": bool(os.environ.get(info["env"]))}
@@ -55,7 +59,10 @@ def _post(url, headers, payload):
     except urllib.error.HTTPError as error:
         raise RuntimeError(f"model API returned HTTP {error.code}") from None
     except (urllib.error.URLError, TimeoutError) as error:
-        raise RuntimeError(f"model API connection failed: {error.reason if hasattr(error, 'reason') else error}") from None
+        reason = error.reason if hasattr(error, "reason") else error
+        if "handshake" in str(reason).lower() and "timed out" in str(reason).lower():
+            raise HandshakeTimeout("model API TLS handshake timed out") from None
+        raise RuntimeError(f"model API connection failed: {reason}") from None
 
 
 def _content(response, provider):
@@ -95,11 +102,14 @@ class ModelClient:
         self.calls = 0
         self.lock = threading.Lock()
 
-    def decide(self, *, day, student, course, service, peers):
+    def _reserve_call(self):
         with self.lock:
             if self.calls >= self.max_calls:
                 raise RuntimeError("model call limit reached")
             self.calls += 1
+
+    def decide(self, *, day, student, course, service, peers):
+        self._reserve_call()
         system = ("You act as one fictional student in a synthetic campus simulation. "
                   "Choose one action from attend, rest, peer, request, accept_support. "
                   "Return only JSON with an action field. No diagnosis or risk prediction. "
@@ -110,22 +120,30 @@ class ModelClient:
         user = json.dumps({"day": day, "student": student, "course": course,
                            "service": service, "peers": peers}, ensure_ascii=False)
         provider = self.provider
-        if provider in OPENAI_COMPATIBLE:
-            response = _post(OPENAI_COMPATIBLE[provider], {"Authorization": f"Bearer {self.key}"},
+        def send():
+            if provider in OPENAI_COMPATIBLE:
+                return _post(OPENAI_COMPATIBLE[provider],
+                             {"Authorization": f"Bearer {self.key}"},
                              {"model": self.model, "temperature": 0, "max_tokens": 80,
                               "messages": [{"role": "system", "content": system},
                                            {"role": "user", "content": user}]})
-        elif provider == "anthropic":
-            response = _post("https://api.anthropic.com/v1/messages",
+            if provider == "anthropic":
+                return _post("https://api.anthropic.com/v1/messages",
                              {"x-api-key": self.key, "anthropic-version": "2023-06-01"},
                              {"model": self.model, "max_tokens": 80, "temperature": 0,
                               "system": system, "messages": [{"role": "user", "content": user}]})
-        else:
-            response = _post(f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent",
-                             {"x-goog-api-key": self.key},
-                             {"systemInstruction": {"parts": [{"text": system}]},
-                              "contents": [{"role": "user", "parts": [{"text": user}]}],
-                              "generationConfig": {"temperature": 0, "maxOutputTokens": 80,
-                                                   "responseMimeType": "application/json"}})
+            return _post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent",
+                {"x-goog-api-key": self.key},
+                {"systemInstruction": {"parts": [{"text": system}]},
+                 "contents": [{"role": "user", "parts": [{"text": user}]}],
+                 "generationConfig": {"temperature": 0, "maxOutputTokens": 80,
+                                      "responseMimeType": "application/json"}})
+
+        try:
+            response = send()
+        except HandshakeTimeout:
+            self._reserve_call()
+            response = send()
         content, usage = _content(response, provider)
         return _action(content), usage if isinstance(usage, dict) else {}

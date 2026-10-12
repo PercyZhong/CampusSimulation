@@ -45,6 +45,11 @@ class Config:
         if value.driver == "llm":
             from .models import validate
             validate(value.model_provider, value.model_id, value.max_model_calls)
+            minimum_calls = value.n_students * (value.end - value.start + 1)
+            if value.max_model_calls < minimum_calls:
+                raise ValueError(
+                    f"max_model_calls must be at least {minimum_calls} for this run"
+                )
         elif value.model_provider is not None or value.model_id is not None or value.max_model_calls:
             raise ValueError("model settings require llm driver")
         if value.condition not in {"baseline", "outreach", "easier_access"}:
