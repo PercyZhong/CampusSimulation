@@ -73,7 +73,7 @@ def _content(response, provider):
 
 def _action(text):
     if not isinstance(text, str):
-        raise ValueError("model returned no text")
+        raise TypeError("model returned no text")
     value = text.strip()
     if value.startswith("```"):
         value = value.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
