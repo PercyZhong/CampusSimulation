@@ -34,7 +34,11 @@ def test_provider_request_and_limit(monkeypatch, provider, key_name):
                                   service={}, peers={})
     assert action == "rest" and usage
     assert len(seen) == 1
-    assert "local-test-key" in seen[0][1].values()
+    expected_header = ("Authorization", "Bearer local-test-key") if provider in {
+        "deepseek", "qwen", "openai"
+    } else (("x-api-key", "local-test-key") if provider == "anthropic" else
+            ("x-goog-api-key", "local-test-key"))
+    assert seen[0][1][expected_header[0]] == expected_header[1]
     with pytest.raises(RuntimeError, match="limit reached"):
         client.decide(day=2, student={}, course={}, service={}, peers={})
     assert len(seen) == 1
