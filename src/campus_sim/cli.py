@@ -9,7 +9,7 @@ from .analysis import export, verify_resume
 from .plan import build
 
 
-def _config(path, seed=None, days=None, provider=None, model=None, max_calls=None):
+def _config(path, seed=None, days=None, provider=None, model=None, max_calls=None, temperature=None):
     config = json.loads(Path(path).read_text(encoding="utf-8"))
     if seed is not None:
         config["seed"] = seed
@@ -18,6 +18,8 @@ def _config(path, seed=None, days=None, provider=None, model=None, max_calls=Non
     if provider is not None:
         config.update(driver="llm", model_provider=provider, model_id=model,
                       max_model_calls=max_calls)
+        if temperature is not None:
+            config["model_temperature"] = temperature
     return config
 
 
@@ -25,6 +27,7 @@ def _model_options(parser):
     parser.add_argument("--provider", choices=("deepseek", "qwen", "openai", "gemini", "anthropic"))
     parser.add_argument("--model")
     parser.add_argument("--max-model-calls", type=int)
+    parser.add_argument("--temperature", type=float, default=None)
 
 
 def main(argv=None):
@@ -52,7 +55,7 @@ def main(argv=None):
     web.add_argument("--port", type=int, default=8765)
     args = parser.parse_args(argv)
     if args.command in {"run", "batch"}:
-        if args.provider is None and (args.model is not None or args.max_model_calls is not None):
+        if args.provider is None and (args.model is not None or args.max_model_calls is not None or args.temperature is not None):
             parser.error("--model and --max-model-calls require --provider")
         if args.provider is not None and (args.model is None or args.max_model_calls is None):
             parser.error("--provider requires --model and --max-model-calls")
@@ -69,7 +72,7 @@ def main(argv=None):
     from society0.kernel.runner import run_plan
     if args.command == "run":
         config = _config(args.config, args.seed, args.days,
-                         args.provider, args.model, args.max_model_calls)
+                         args.provider, args.model, args.max_model_calls, args.temperature)
         result = asyncio.run(run_plan(args.output, build(config), source=args.source, step=args.step))
         print(json.dumps({"runner": result, "summary": export(args.output)}, ensure_ascii=False))
         return 0
@@ -79,7 +82,7 @@ def main(argv=None):
         for seed in (11, 22, 33):
             config = _config(Path(args.configs) / f"{condition}.json", seed,
                              provider=args.provider, model=args.model,
-                             max_calls=args.max_model_calls)
+                             max_calls=args.max_model_calls, temperature=args.temperature)
             path = root / f"{condition}-seed{seed}"
             asyncio.run(run_plan(path, build(config)))
             summaries.append(export(path))

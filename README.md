@@ -1,8 +1,10 @@
 # CampusSimulation
 
-## 本地平台（0.4.0 开发版）
+## 本地平台（0.5.0 政策实验开发版）
 
 0.4.0 开发树加入学生 LLM 行动决策。实验者可在 Web 工作台选择离线规则或 DeepSeek、Qwen、OpenAI GPT、Gemini、Anthropic Claude 的 API，并可填写提供商支持的其他模型 ID。Claude Code 使用的 Claude 模型在这里通过 Anthropic API 调用；Claude Code 订阅本身不是 API 密钥。辅导员值班和服务资格、排队、容量继续由确定性校园规则执行。
+
+后续政策实验版把每个条件的公开信息和当日可用行动写入 `policy` 决策上下文，并随每条 `model_decision` 事件保存。基线保留原求助门槛；`easier_access` 降低有效门槛；`outreach` 在信息实际送达后提高当日出现求助机会的概率。三种条件使用同一命名随机流来生成机会，便于配对比较。模型在可用行动中选择，温度可通过 `--temperature` 或 Web 页面调整。以上参数仍是未经校准的实验假设；代码只能保证政策输入和机会机制不同，不能保证三条件的最终结果必然不同。
 
 启动 Web 服务前，在 Linux 终端为所选提供商设置环境变量：DeepSeek 使用 `DEEPSEEK_API_KEY`，Qwen 使用 `DASHSCOPE_API_KEY`，OpenAI 使用 `OPENAI_API_KEY`，Gemini 使用 `GEMINI_API_KEY`，Anthropic 使用 `ANTHROPIC_API_KEY`。不要把密钥写入配置文件、命令行或 Git。Qwen 适配器使用阿里云百炼中国站兼容接口；其他地域或自定义网关需要另行配置适配器。Web 页面会显示密钥是否已配置，但不显示密钥值。模型建议列表只是示例，具体 ID 和 API 权限以各提供商账户为准。
 

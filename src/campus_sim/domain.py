@@ -22,6 +22,7 @@ class Config:
     model_provider: str | None = None
     model_id: str | None = None
     max_model_calls: int = 0
+    model_temperature: float = 0.2
 
     @classmethod
     def parse(cls, raw):
@@ -56,7 +57,46 @@ class Config:
             raise ValueError("unknown condition")
         if type(value.access_barrier) not in (int, float) or not 0 <= value.access_barrier <= 1:
             raise ValueError("access_barrier must be in [0,1]")
+        if type(value.model_temperature) not in (int, float) or not 0 <= value.model_temperature <= 2:
+            raise ValueError("model_temperature must be in [0,2]")
         return value
+
+
+def policy_context(config, student, day):
+    """Explain the active intervention without exposing hidden student state."""
+    informed = config.condition == "outreach" and student["outreach_seen"]
+    if student["pending_day"] is not None or student["supported"]:
+        actions = ["attend", "rest", "peer"]
+        if student["pending_day"] is not None:
+            actions.append("accept_support")
+        opportunity = False
+    else:
+        barrier = config.access_barrier * (0.45 if config.condition == "easier_access" else 1)
+        propensity = 0.14 + 0.48 * student["willingness"] + 0.14 * (1 - student["connection"])
+        if informed:
+            propensity += 0.16
+        opportunity = unit(config.seed, "request_opportunity", day, student["id"]) < clamp(
+            propensity - barrier
+        ) and day % config.open_every == 0
+        actions = ["attend", "rest", "peer"]
+        if opportunity:
+            actions.append("request")
+    barrier = config.access_barrier * (0.45 if config.condition == "easier_access" else 1)
+    common = {"request_available_today": "request" in actions,
+              "available_actions": actions,
+              "effective_access_barrier": round(barrier, 6)}
+    if informed:
+        return {**common, "name": "outreach",
+                "intervention": "已收到主动关怀提供的一般支持服务信息。",
+                "guidance": "收到信息后，可根据需要考虑校园支持服务。",
+                "information_received": True}
+    if config.condition == "easier_access":
+        return {**common, "name": "easier_access", "intervention": "咨询服务更容易获得；求助门槛降低。",
+                "guidance": "当支持有帮助且门槛较低时，可以提出请求；也可以选择其他行动。",
+                "information_received": False}
+    return {**common, "name": "baseline", "intervention": "现状规则；没有额外主动关怀，求助门槛保持基线。",
+            "guidance": "根据当前状态自行判断是否请求支持或选择其他行动。",
+            "information_received": False}
 
 
 def unit(seed, stream, *parts):

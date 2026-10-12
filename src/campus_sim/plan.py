@@ -14,7 +14,7 @@ from society0.kernel.runner import RunContract, RunPlan
 from society0.kernel.runtime import DriverResult, runtime_plugin
 
 from . import SOCIETY0_SHA
-from .domain import Config, action_choice
+from .domain import Config, action_choice, policy_context
 from .mechanism import campus_plugin
 from .models import ModelClient
 from .schedule import campus_schedule_plugin
@@ -32,7 +32,8 @@ def build(raw):
     config = Config.parse(raw)
     ids = tuple(f"s{i:03d}" for i in range(config.n_students))
     staff_ids = tuple(f"c{i:03d}" for i in range(config.n_staff))
-    model_client = (ModelClient(config.model_provider, config.model_id, config.max_model_calls)
+    model_client = (ModelClient(config.model_provider, config.model_id, config.max_model_calls,
+                                config.model_temperature)
                     if config.driver == "llm" else None)
 
     async def rule(session):
@@ -50,12 +51,14 @@ def build(raw):
         if model_client is None:
             action = action_choice(state, session.moment.time, config)
         else:
+            policy = policy_context(config, state, session.moment.time)
             action, usage = model_client.decide(
                 day=session.moment.time, student=state, course=json.loads(course.data),
-                service=json.loads(service.data), peers=json.loads(peers.data))
+                service=json.loads(service.data), peers=json.loads(peers.data), policy=policy)
             await session.actions.invoke("campus.model_decision", Ref("campus", "student", actor),
                 {"action": action, "provider": config.model_provider,
-                 "model": config.model_id, "usage": usage})
+                 "model": config.model_id, "temperature": config.model_temperature,
+                 "policy": policy, "usage": usage})
         result = await session.actions.invoke("campus." + action,
                                                Ref("campus", "student", actor), {})
         return DriverResult("completed", {"action": action, "status": result.status,
@@ -81,11 +84,11 @@ def build(raw):
                               max_activations=config.n_students + config.n_staff),
                campus_schedule_plugin(config, ids, staff_ids)]
     public = asdict(config)
-    public["release"] = raw.get("release", {"scenario": "0.4.0"})
+    public["release"] = raw.get("release", {"scenario": "0.5.0"})
     config_hash = hashlib.sha256(json.dumps(public, sort_keys=True,
                                 separators=(",", ":")).encode()).hexdigest()
     return RunPlan(plugins, RunContract(
-        release={"scenario": "0.4.0", "scenario_git": _git_sha(), "society0_git": SOCIETY0_SHA},
+        release={"scenario": "0.5.0", "scenario_git": _git_sha(), "society0_git": SOCIETY0_SHA},
         dependencies={"python": sys.version.split()[0], "society0_git": SOCIETY0_SHA},
         configuration={"plugins": {"campus": public},
                        "actors": [*staff_ids, *ids], "models": (

@@ -5,7 +5,7 @@ import json
 from society0.kernel.interaction import Action, ActionResult, DocumentChunk, Ref
 from society0.kernel.plugins import Plugin
 
-from .domain import academic_event, clamp, next_mood, next_stress
+from .domain import academic_event, clamp, next_mood, next_stress, policy_context
 from .language import language_backend
 from .population import make_population, make_staff
 
@@ -108,6 +108,9 @@ class Campus:
                 reason = "already_supported"
             if action == "request" and day % self.config.open_every != 0:
                 reason = "service_closed"
+            if (self.config.driver == "llm" and action == "request"
+                    and not policy_context(self.config, state, day)["request_available_today"]):
+                reason = "policy_unavailable"
             if action == "accept_support":
                 first = writer.query("SELECT actor FROM campus_queue ORDER BY requested_day,ordinal LIMIT 1")
                 used = writer.query("SELECT used FROM campus_service_usage WHERE day=?", (day,))
@@ -274,8 +277,9 @@ def campus_plugin(config):
             dependencies=("campus_staff", "campus_staff_shifts"))
         decision_schema = {"type": "object", "properties": {
             "action": {"type": "string"}, "provider": {"type": "string"},
-            "model": {"type": "string"}, "usage": {"type": "object"}},
-            "required": ["action", "provider", "model", "usage"],
+            "model": {"type": "string"}, "temperature": {"type": "number"},
+            "policy": {"type": "object"}, "usage": {"type": "object"}},
+            "required": ["action", "provider", "model", "temperature", "policy", "usage"],
             "additionalProperties": False}
         actions.register(Action("campus.model_decision", ("campus", "student"),
             "model_decision", decision_schema,

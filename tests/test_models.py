@@ -2,7 +2,7 @@
 
 import pytest
 
-from campus_sim.domain import Config
+from campus_sim.domain import Config, policy_context
 from campus_sim.models import HandshakeTimeout, ModelClient, _action, choices
 
 
@@ -31,7 +31,8 @@ def test_provider_request_and_limit(monkeypatch, provider, key_name):
     monkeypatch.setattr("campus_sim.models._post", fake_post)
     client = ModelClient(provider, choices()[provider]["models"][0], 1)
     action, usage = client.decide(day=1, student={"id": "s000"}, course={},
-                                  service={}, peers={})
+                                  service={}, peers={},
+                                  policy={"name": "baseline", "available_actions": ["rest"]})
     assert action == "rest" and usage
     assert len(seen) == 1
     expected_header = ("Authorization", "Bearer local-test-key") if provider in {
@@ -40,7 +41,7 @@ def test_provider_request_and_limit(monkeypatch, provider, key_name):
             ("x-goog-api-key", "local-test-key"))
     assert seen[0][1][expected_header[0]] == expected_header[1]
     with pytest.raises(RuntimeError, match="limit reached"):
-        client.decide(day=2, student={}, course={}, service={}, peers={})
+        client.decide(day=2, student={}, course={}, service={}, peers={}, policy={})
     assert len(seen) == 1
 
 
@@ -59,6 +60,20 @@ def test_model_configuration_and_response(monkeypatch):
         Config.parse({"end": 5, "n_students": 40, "driver": "llm",
                       "model_provider": "qwen", "model_id": "qwen-plus",
                       "max_model_calls": 199})
+    with pytest.raises(ValueError, match="model_temperature"):
+        Config.parse({"driver": "llm", "model_provider": "qwen", "model_id": "qwen-plus",
+                      "max_model_calls": 1, "n_students": 1, "model_temperature": 2.1})
+    student = {"id": "s000", "willingness": 0.5, "connection": 0.5,
+               "outreach_seen": False, "pending_day": None, "supported": False}
+    before = policy_context(Config(condition="outreach"), student, 1)
+    assert not before["information_received"]
+    assert before == policy_context(Config(condition="baseline"), student, 1)
+    student["outreach_seen"] = True
+    assert policy_context(Config(condition="outreach"), student, 5)["information_received"]
+    assert "更容易" in policy_context(Config(condition="easier_access"), student, 1)["intervention"]
+    assert policy_context(Config(condition="baseline"), student, 1)["effective_access_barrier"] == 0.22
+    with pytest.raises(ValueError, match="unavailable action"):
+        _action('{"action":"request"}', ["attend", "rest"])
 
 
 def test_handshake_timeout_retries_once_within_call_limit(monkeypatch):
@@ -73,8 +88,39 @@ def test_handshake_timeout_retries_once_within_call_limit(monkeypatch):
 
     monkeypatch.setattr("campus_sim.models._post", fake_post)
     client = ModelClient("qwen", "qwen-plus", 2)
-    action, _ = client.decide(day=1, student={}, course={}, service={}, peers={})
+    action, _ = client.decide(day=1, student={}, course={}, service={}, peers={},
+                              policy={"available_actions": ["rest"]})
     assert action == "rest" and client.calls == len(attempts) == 2
+
+
+def test_policy_changes_request_opportunity_with_shared_draws():
+    student = {"id": "s000", "willingness": 0.5, "connection": 0.5,
+               "outreach_seen": False, "pending_day": None, "supported": False}
+    baseline = Config(condition="baseline")
+    easier = Config(condition="easier_access")
+    outreach = Config(condition="outreach")
+    assert any(
+        policy_context(easier, {**student, "id": f"s{number:03d}"}, day)["request_available_today"]
+        and not policy_context(baseline, {**student, "id": f"s{number:03d}"}, day)["request_available_today"]
+        for number in range(40) for day in range(1, 6)
+    )
+    for day in range(1, 31):
+        normal = policy_context(baseline, student, day)
+        easier_today = policy_context(easier, student, day)
+        assert not normal["request_available_today"] or easier_today["request_available_today"]
+        assert policy_context(outreach, student, day)["request_available_today"] == normal[
+            "request_available_today"
+        ]
+    student["outreach_seen"] = True
+    assert any(
+        policy_context(outreach, {**student, "id": f"s{number:03d}"}, day)["request_available_today"]
+        and not policy_context(baseline, {**student, "id": f"s{number:03d}"}, day)["request_available_today"]
+        for number in range(40) for day in range(5, 10)
+    )
+    for day in range(5, 31):
+        normal = policy_context(baseline, student, day)
+        informed = policy_context(outreach, student, day)
+        assert not normal["request_available_today"] or informed["request_available_today"]
 
 
 def test_llm_actor_run_records_decisions_without_live_network(monkeypatch, tmp_path):
@@ -90,7 +136,7 @@ def test_llm_actor_run_records_decisions_without_live_network(monkeypatch, tmp_p
 
     def fake_post(url, headers, payload):
         requests.append(payload)
-        return {"choices": [{"message": {"content": '{"action":"request"}'}}],
+        return {"choices": [{"message": {"content": '{"action":"attend"}'}}],
                 "usage": {"total_tokens": 9}}
 
     monkeypatch.setattr("campus_sim.models._post", fake_post)

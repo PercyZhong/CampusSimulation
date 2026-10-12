@@ -78,7 +78,7 @@ def _content(response, provider):
         raise RuntimeError("model API response has no text") from error
 
 
-def _action(text):
+def _action(text, allowed=None):
     if not isinstance(text, str):
         raise TypeError("model returned no text")
     value = text.strip()
@@ -91,13 +91,18 @@ def _action(text):
     action = data.get("action") if isinstance(data, dict) else None
     if action not in ACTION_NAMES:
         raise ValueError("model returned unsupported action")
+    if allowed is not None and action not in allowed:
+        raise ValueError("model returned unavailable action")
     return action
 
 
 class ModelClient:
-    def __init__(self, provider, model, max_calls):
+    def __init__(self, provider, model, max_calls, temperature=0.2):
         validate(provider, model, max_calls)
+        if type(temperature) not in (int, float) or not 0 <= temperature <= 2:
+            raise ValueError("model_temperature must be in [0,2]")
         self.provider, self.model, self.max_calls = provider, model, max_calls
+        self.temperature = temperature
         self.key = require_key(provider)
         self.calls = 0
         self.lock = threading.Lock()
@@ -108,36 +113,38 @@ class ModelClient:
                 raise RuntimeError("model call limit reached")
             self.calls += 1
 
-    def decide(self, *, day, student, course, service, peers):
+    def decide(self, *, day, student, course, service, peers, policy):
         self._reserve_call()
         system = ("You act as one fictional student in a synthetic campus simulation. "
-                  "Choose one action from attend, rest, peer, request, accept_support. "
+                  "Choose exactly one action from policy.available_actions. "
                   "Return only JSON with an action field. No diagnosis or risk prediction. "
-                  "If pending_day is set, choose accept_support. If supported is true, "
-                  "do not choose request. The service access_barrier is lower when access "
-                  "is easier; outreach_seen records general information received. "
+                  "If pending_day is set, consider accept_support when available. "
+                  "The service access_barrier affects whether request is available today; "
+                  "outreach_seen records information actually received. "
+                  "Policy is an experimental condition, not a diagnosis. Follow its "
+                  "guidance when choosing among actions, while keeping actions plausible. "
                   "Service rules are enforced by the simulator.")
         user = json.dumps({"day": day, "student": student, "course": course,
-                           "service": service, "peers": peers}, ensure_ascii=False)
+                           "service": service, "peers": peers, "policy": policy}, ensure_ascii=False)
         provider = self.provider
         def send():
             if provider in OPENAI_COMPATIBLE:
                 return _post(OPENAI_COMPATIBLE[provider],
                              {"Authorization": f"Bearer {self.key}"},
-                             {"model": self.model, "temperature": 0, "max_tokens": 80,
+                             {"model": self.model, "temperature": self.temperature, "max_tokens": 80,
                               "messages": [{"role": "system", "content": system},
                                            {"role": "user", "content": user}]})
             if provider == "anthropic":
                 return _post("https://api.anthropic.com/v1/messages",
                              {"x-api-key": self.key, "anthropic-version": "2023-06-01"},
-                             {"model": self.model, "max_tokens": 80, "temperature": 0,
+                             {"model": self.model, "max_tokens": 80, "temperature": self.temperature,
                               "system": system, "messages": [{"role": "user", "content": user}]})
             return _post(
                 f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent",
                 {"x-goog-api-key": self.key},
                 {"systemInstruction": {"parts": [{"text": system}]},
                  "contents": [{"role": "user", "parts": [{"text": user}]}],
-                 "generationConfig": {"temperature": 0, "maxOutputTokens": 80,
+                 "generationConfig": {"temperature": self.temperature, "maxOutputTokens": 80,
                                       "responseMimeType": "application/json"}})
 
         try:
@@ -146,4 +153,4 @@ class ModelClient:
             self._reserve_call()
             response = send()
         content, usage = _content(response, provider)
-        return _action(content), usage if isinstance(usage, dict) else {}
+        return _action(content, policy["available_actions"]), usage if isinstance(usage, dict) else {}
