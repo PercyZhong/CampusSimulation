@@ -62,7 +62,7 @@ def test_model_configuration_and_response(monkeypatch):
                       "max_model_calls": 199})
     with pytest.raises(ValueError, match="model_temperature"):
         Config.parse({"driver": "llm", "model_provider": "qwen", "model_id": "qwen-plus",
-                      "max_model_calls": 1, "n_students": 1, "model_temperature": 2.1})
+                      "max_model_calls": 30, "n_students": 1, "model_temperature": 2.1})
     student = {"id": "s000", "willingness": 0.5, "connection": 0.5,
                "outreach_seen": False, "pending_day": None, "supported": False}
     before = policy_context(Config(condition="outreach"), student, 1)
