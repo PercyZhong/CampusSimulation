@@ -17,7 +17,8 @@ def make_population(config):
                      "willingness": round(0.2 + 0.6 * unit(config.seed, "willingness", sid), 6),
                      "supported": False, "pending_day": None, "wait_days": 0,
                      "low_streak": 0, "ever_requested": False, "ever_supported": False,
-                     "outreach_seen": False, "initial_group": "lower" if connection < 0.475 else "higher"})
+                     "outreach_seen": False, "recent_events": [], "social_memory": [],
+                     "initial_group": "lower" if connection < 0.475 else "higher"})
     edges = [(rows[i]["id"], rows[(i + 1) % len(rows)]["id"]) for i in range(len(rows))]
     return rows, edges
 

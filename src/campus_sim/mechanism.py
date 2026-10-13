@@ -41,6 +41,16 @@ class Campus:
         return self.store.read(lambda view: [json.loads(row[0]) for row in
             view.iter_query("SELECT body FROM campus_students ORDER BY id")])
 
+    @staticmethod
+    def remember(state, event):
+        state.setdefault("recent_events", []).append(event)
+        state["recent_events"] = state["recent_events"][-5:]
+
+    @staticmethod
+    def remember_social(state, event):
+        state.setdefault("social_memory", []).append(event)
+        state["social_memory"] = state["social_memory"][-5:]
+
     def available_slots(self, view, day):
         rows = view.query("SELECT COALESCE(SUM(slots),0) FROM campus_staff_shifts WHERE day=?",
                           (day,))
@@ -169,6 +179,15 @@ class Campus:
                                                               actor=actor, partner=partner),
                        "backend": self.language.backend}
                       if action == "peer" else None)
+            memory = {"day": day, "action": action, "status": "completed"}
+            if action == "peer":
+                memory["partner"] = partner
+                self.remember_social(state, {"day": day, "partner": partner, "action": "peer"})
+                self.remember_social(partner_state, {"day": day, "partner": actor, "action": "peer"})
+                writer.execute("UPDATE campus_students SET body=? WHERE id=?",
+                               (dumps(partner_state), partner))
+            self.remember(state, memory)
+            writer.execute("UPDATE campus_students SET body=? WHERE id=?", (dumps(state), actor))
             self.event(writer, day, actor, action, "completed",
                        detail=detail)
             return {"status": "completed", "action": action}
@@ -235,7 +254,8 @@ class CampusInformation:
         if ref.kind == "student":
             state = self.campus.student(ref.key)
             data = {key: state[key] for key in ("id", "stress", "mood", "recovery", "connection", "willingness",
-                                                  "supported", "pending_day", "outreach_seen")}
+                                                  "supported", "pending_day", "outreach_seen", "recent_events",
+                                                  "social_memory")}
         elif ref.kind == "service":
             barrier = self.campus.config.access_barrier
             if self.campus.config.condition == "easier_access":

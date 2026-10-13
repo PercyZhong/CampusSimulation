@@ -37,6 +37,7 @@ def test_synthetic_population_is_shared_across_conditions():
     assert all(0 <= row[key] <= 1 for row in left
                for key in ("stress", "mood", "recovery", "connection", "willingness"))
     assert all(row["stress"] == row["initial_stress"] for row in left)
+    assert all(row["recent_events"] == [] and row["social_memory"] == [] for row in left)
 
 
 def test_policy_does_not_shift_external_schedule():

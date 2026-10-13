@@ -150,6 +150,13 @@ def test_peer_action_records_partner_dialogue_and_updates_partner(tmp_path):
             detail = json.loads(event)
             assert detail["partner"] in {"s001", "s002"}
             assert len(detail["turns"]) == 2
+            student = store.read(lambda view: json.loads(view.query(
+                "SELECT body FROM campus_students WHERE id='s000'", max_rows=1)[0][0]))
+            partner = store.read(lambda view: json.loads(view.query(
+                "SELECT body FROM campus_students WHERE id=?", (detail["partner"],), max_rows=1)[0][0]))
+            assert student["recent_events"][-1]["action"] == "peer"
+            assert student["social_memory"][-1]["partner"] == detail["partner"]
+            assert partner["social_memory"][-1]["partner"] == "s000"
 
     asyncio.run(exercise())
 
