@@ -5,7 +5,7 @@ import json
 from society0.kernel.interaction import Action, ActionResult, DocumentChunk, Ref
 from society0.kernel.plugins import Plugin
 
-from .domain import academic_event, clamp, next_mood, next_stress, policy_context
+from .domain import academic_event, clamp, next_mood, next_stress, policy_context, unit
 from .language import language_backend
 from .population import make_population, make_staff
 
@@ -123,7 +123,9 @@ class Campus:
                 elif (used[0][0] if used else 0) >= self.available_slots(writer, day):
                     reason = "capacity_full"
             if action == "peer":
-                peers = writer.query("SELECT 1 FROM campus_edges WHERE a=? OR b=? LIMIT 1", (actor, actor))
+                peers = writer.query(
+                    "SELECT CASE WHEN a=? THEN b ELSE a END FROM campus_edges "
+                    "WHERE a=? OR b=? ORDER BY 1", (actor, actor, actor))
                 if not peers:
                     reason = "no_peer_edge"
             if reason:
@@ -146,6 +148,7 @@ class Campus:
             elif action == "rest":
                 state["recovery"] = clamp(state["recovery"] + 0.09)
             elif action == "peer":
+                partner = peers[int(unit(self.config.seed, "peer_partner", day, actor) * len(peers))][0]
                 state["connection"] = clamp(state["connection"] + 0.045)
             elif action == "attend":
                 state["willingness"] = clamp(state["willingness"] + 0.005)
@@ -154,9 +157,17 @@ class Campus:
                 self.event(writer, day, actor, action, "rejected", reason)
                 return {"status": "rejected", "reason": reason}
             writer.execute("UPDATE campus_students SET body=? WHERE id=?", (dumps(state), actor))
+            if action == "peer":
+                partner_rows = writer.query("SELECT body FROM campus_students WHERE id=?", (partner,), max_rows=1)
+                partner_state = json.loads(partner_rows[0][0])
+                partner_state["connection"] = clamp(partner_state["connection"] + 0.02)
+                writer.execute("UPDATE campus_students SET body=? WHERE id=?",
+                               (dumps(partner_state), partner))
             detail = ({"wait_days": wait} if action == "accept_support" else
-                      {"message": self.language.peer_message(seed=self.config.seed, day=day,
-                                                              actor=actor), "backend": "offline"}
+                      {"partner": partner,
+                       "turns": self.language.peer_dialogue(seed=self.config.seed, day=day,
+                                                              actor=actor, partner=partner),
+                       "backend": self.language.backend}
                       if action == "peer" else None)
             self.event(writer, day, actor, action, "completed",
                        detail=detail)

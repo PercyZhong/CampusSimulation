@@ -10,6 +10,8 @@ class LanguageBackend(Protocol):
 
     def peer_message(self, *, seed: int, day: int, actor: str) -> str: ...
 
+    def peer_dialogue(self, *, seed: int, day: int, actor: str, partner: str) -> list[dict]: ...
+
 
 class OfflineLanguage:
     backend = "offline"
@@ -22,6 +24,16 @@ class OfflineLanguage:
     def peer_message(self, *, seed, day, actor):
         choice = int(unit(seed, "peer_language", day, actor) * len(self.templates))
         return self.templates[choice]
+
+    def peer_dialogue(self, *, seed, day, actor, partner):
+        opening = self.peer_message(seed=seed, day=day, actor=actor)
+        replies = (
+            "We can compare notes after class.",
+            "That sounds difficult. We can look for campus support together.",
+            "Thanks for checking in. I will think about the next step.",
+        )
+        reply = replies[int(unit(seed, "peer_reply", day, actor, partner) * len(replies))]
+        return [{"speaker": actor, "text": opening}, {"speaker": partner, "text": reply}]
 
 
 def language_backend(name: str) -> LanguageBackend:

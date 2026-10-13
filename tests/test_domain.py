@@ -60,3 +60,6 @@ def test_offline_language_is_reproducible():
     backend = language_backend("offline")
     assert backend.peer_message(seed=11, day=1, actor="s000") == backend.peer_message(
         seed=11, day=1, actor="s000")
+    dialogue = backend.peer_dialogue(seed=11, day=1, actor="s000", partner="s001")
+    assert [turn["speaker"] for turn in dialogue] == ["s000", "s001"]
+    assert dialogue == backend.peer_dialogue(seed=11, day=1, actor="s000", partner="s001")

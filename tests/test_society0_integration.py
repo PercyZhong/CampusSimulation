@@ -125,6 +125,35 @@ def test_actor_visibility_and_action_rechecks(tmp_path):
     asyncio.run(exercise())
 
 
+def test_peer_action_records_partner_dialogue_and_updates_partner(tmp_path):
+    import asyncio
+
+    from society0.kernel.composition import compose
+    from society0.kernel.interaction import InteractionScope, Moment, Ref
+
+    from campus_sim.plan import build
+
+    raw = json.loads(Path("configs/baseline.json").read_text(encoding="utf-8"))
+    raw.update(end=1, n_students=3)
+
+    async def exercise():
+        async with compose(tmp_path / "peer", build(raw).plugins) as host:
+            actions = host.service("interaction", "actions")
+            with InteractionScope("s000", Moment(1, "decide")) as scope:
+                result = await actions.bound(scope).invoke(
+                    "campus.peer", Ref("campus", "student", "s000"), {})
+                assert result.status == "completed"
+            store = host.service("storage", "store")
+            event = store.read(lambda view: view.query(
+                "SELECT detail FROM campus_events WHERE action='peer' AND status='completed'",
+                max_rows=1))[0][0]
+            detail = json.loads(event)
+            assert detail["partner"] in {"s001", "s002"}
+            assert len(detail["turns"]) == 2
+
+    asyncio.run(exercise())
+
+
 def test_failure_restores_only_complete_step(tmp_path):
     import asyncio
 
