@@ -71,7 +71,8 @@ def test_actor_visibility_and_action_rechecks(tmp_path):
     from campus_sim.plan import build
 
     raw = json.loads(Path("configs/baseline.json").read_text(encoding="utf-8"))
-    raw.update(end=2, n_students=4, capacity=1)
+    raw.update(end=2, n_students=4, capacity=1,
+               policy_components={**raw["policy_components"], "service": {"capacity": 1, "open_every": 1}})
 
     async def exercise():
         async with compose(tmp_path / "permissions", build(raw).plugins) as host:

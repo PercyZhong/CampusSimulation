@@ -67,7 +67,10 @@ def test_model_configuration_and_response(monkeypatch):
                "outreach_seen": False, "pending_day": None, "supported": False}
     before = policy_context(Config(condition="outreach"), student, 1)
     assert not before["information_received"]
-    assert before == policy_context(Config(condition="baseline"), student, 1)
+    assert before["effective_access_barrier"] == policy_context(Config(condition="baseline"), student, 1)[
+        "effective_access_barrier"
+    ]
+    assert before["components"]["information_delivery"]["enabled"]
     student["outreach_seen"] = True
     assert policy_context(Config(condition="outreach"), student, 5)["information_received"]
     assert "更容易" in policy_context(Config(condition="easier_access"), student, 1)["intervention"]
