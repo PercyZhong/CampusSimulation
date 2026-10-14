@@ -101,6 +101,21 @@ class Campus:
                     state["outreach_seen"] = True
                     writer.execute("UPDATE campus_students SET body=? WHERE id=?", (dumps(state), sid))
                     self.event(writer, day, sid, "outreach_information", "completed")
+            follow_up = policy_components(self.config)["follow_up"]
+            if follow_up["enabled"]:
+                for sid, body in list(writer.iter_query("SELECT id,body FROM campus_students ORDER BY id")):
+                    state = json.loads(body)
+                    due = (state["supported_day"] is not None
+                           and not state["follow_up_sent"]
+                           and day - state["supported_day"] >= follow_up["days_after_support"])
+                    if due:
+                        state["follow_up_sent"] = True
+                        state["stress"] = clamp(state["stress"] - 0.04)
+                        state["mood"] = clamp(state["mood"] + 0.03)
+                        self.remember(state, {"day": day, "action": "staff_follow_up", "status": "completed"})
+                        writer.execute("UPDATE campus_students SET body=? WHERE id=?", (dumps(state), sid))
+                        self.event(writer, day, sid, "staff_follow_up", "completed",
+                                   detail={"days_after_support": follow_up["days_after_support"]})
         self.store.transaction(write)
         return load
 
@@ -162,6 +177,7 @@ class Campus:
                 state["wait_days"] += 1 if wait else 0
                 state["supported"] = True
                 state["ever_supported"] = True
+                state["supported_day"] = day
                 state["stress"] = clamp(state["stress"] - 0.1)
                 writer.execute("DELETE FROM campus_queue WHERE actor=?", (actor,))
                 writer.execute("INSERT INTO campus_service_usage VALUES(?,1) ON CONFLICT(day) DO UPDATE SET used=used+1", (day,))
@@ -265,7 +281,7 @@ class CampusInformation:
             state = self.campus.student(ref.key)
             data = {key: state[key] for key in ("id", "stress", "mood", "recovery", "connection", "willingness",
                                                   "supported", "pending_day", "outreach_seen", "recent_events",
-                                                  "social_memory")}
+                                                  "social_memory", "supported_day", "follow_up_sent")}
         elif ref.kind == "service":
             components = policy_components(self.campus.config)
             barrier = self.campus.config.access_barrier * components["access"]["barrier_multiplier"]

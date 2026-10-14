@@ -62,7 +62,7 @@ class Config:
             raise ValueError("model_temperature must be in [0,2]")
         if not isinstance(value.policy_components, dict):
             raise TypeError("policy_components must be an object")
-        unknown = set(value.policy_components) - {"information_delivery", "access", "service"}
+        unknown = set(value.policy_components) - {"information_delivery", "access", "service", "follow_up"}
         if unknown:
             raise ValueError(f"unknown policy components: {sorted(unknown)}")
         for name, component in value.policy_components.items():
@@ -79,6 +79,11 @@ class Config:
                 raise ValueError(f"policy service {key} must be a positive integer")
         if service.get("capacity", value.capacity) > value.n_staff * 3:
             raise ValueError("policy service capacity exceeds configured staff slots")
+        follow_up = value.policy_components.get("follow_up", {})
+        if "days_after_support" in follow_up and (
+                type(follow_up["days_after_support"]) is not int
+                or follow_up["days_after_support"] < 1):
+            raise ValueError("follow_up days_after_support must be a positive integer")
         return value
 
 
@@ -90,6 +95,7 @@ def policy_components(config):
         "access": {
             "barrier_multiplier": 0.45 if config.condition == "easier_access" else 1.0},
         "service": {"capacity": config.capacity, "open_every": config.open_every},
+        "follow_up": {"enabled": False, "days_after_support": 3},
     }
     for name, values in config.policy_components.items():
         defaults[name].update(values)

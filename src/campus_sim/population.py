@@ -16,6 +16,7 @@ def make_population(config):
                      "connection": connection,
                      "willingness": round(0.2 + 0.6 * unit(config.seed, "willingness", sid), 6),
                      "supported": False, "pending_day": None, "wait_days": 0,
+                     "supported_day": None, "follow_up_sent": False,
                      "low_streak": 0, "ever_requested": False, "ever_supported": False,
                      "outreach_seen": False, "recent_events": [], "social_memory": [],
                      "initial_group": "lower" if connection < 0.475 else "higher"})

@@ -35,7 +35,7 @@ def test_configuration_and_named_streams():
     assert components["access"]["barrier_multiplier"] == 0.45
     assert components["service"] == {"capacity": 3, "open_every": 1}
     context = policy_context(Config(), make_population(Config())[0][0], 1)
-    assert set(context["components"]) == {"information_delivery", "access", "service"}
+    assert set(context["components"]) == {"information_delivery", "access", "service", "follow_up"}
 
 
 def test_synthetic_population_is_shared_across_conditions():

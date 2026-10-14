@@ -162,6 +162,46 @@ def test_peer_action_records_partner_dialogue_and_updates_partner(tmp_path):
     asyncio.run(exercise())
 
 
+def test_follow_up_component_records_once_and_updates_student(tmp_path):
+    import asyncio
+
+    from society0.kernel.composition import compose
+    from society0.kernel.interaction import InteractionScope, Moment, Ref
+
+    from campus_sim.plan import build
+
+    raw = json.loads(Path("configs/baseline.json").read_text(encoding="utf-8"))
+    raw.update(end=5, n_students=1, policy_components={
+        **raw["policy_components"], "follow_up": {"enabled": True, "days_after_support": 2}})
+
+    async def exercise():
+        async with compose(tmp_path / "follow-up", build(raw).plugins) as host:
+            actions = host.service("interaction", "actions")
+            with InteractionScope("s000", Moment(1, "decide")) as scope:
+                requested = await actions.bound(scope).invoke(
+                    "campus.request", Ref("campus", "student", "s000"), {})
+                assert requested.status == "completed"
+            with InteractionScope("c000", Moment(1, "staff_shift")) as scope:
+                await actions.bound(scope).invoke(
+                    "campus.staff_shift", Ref("campus", "staff", "c000"), {})
+            with InteractionScope("s000", Moment(2, "decide")) as scope:
+                accepted = await actions.bound(scope).invoke(
+                    "campus.accept_support", Ref("campus", "student", "s000"), {})
+                assert accepted.status == "completed"
+            campus = host.service("campus", "campus")
+            campus.prepare(4)
+            campus.prepare(5)
+            store = host.service("storage", "store")
+            events = store.read(lambda view: view.query(
+                "SELECT day,action FROM campus_events WHERE action='staff_follow_up'"))
+            assert events == [(4, "staff_follow_up")]
+            state = store.read(lambda view: json.loads(view.query(
+                "SELECT body FROM campus_students WHERE id='s000'", max_rows=1)[0][0]))
+            assert state["follow_up_sent"] is True
+
+    asyncio.run(exercise())
+
+
 def test_failure_restores_only_complete_step(tmp_path):
     import asyncio
 
