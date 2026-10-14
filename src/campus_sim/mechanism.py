@@ -5,7 +5,15 @@ import json
 from society0.kernel.interaction import Action, ActionResult, DocumentChunk, Ref
 from society0.kernel.plugins import Plugin
 
-from .domain import academic_event, clamp, next_mood, next_stress, policy_components, policy_context, unit
+from .domain import (
+    academic_event,
+    clamp,
+    next_mood,
+    next_stress,
+    policy_components,
+    policy_context,
+    unit,
+)
 from .language import language_backend
 from .population import make_population, make_staff
 

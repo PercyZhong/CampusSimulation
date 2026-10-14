@@ -61,13 +61,13 @@ class Config:
         if type(value.model_temperature) not in (int, float) or not 0 <= value.model_temperature <= 2:
             raise ValueError("model_temperature must be in [0,2]")
         if not isinstance(value.policy_components, dict):
-            raise ValueError("policy_components must be an object")
+            raise TypeError("policy_components must be an object")
         unknown = set(value.policy_components) - {"information_delivery", "access", "service"}
         if unknown:
             raise ValueError(f"unknown policy components: {sorted(unknown)}")
         for name, component in value.policy_components.items():
             if not isinstance(component, dict):
-                raise ValueError(f"policy component {name} must be an object")
+                raise TypeError(f"policy component {name} must be an object")
         access = value.policy_components.get("access", {})
         if "barrier_multiplier" in access and (
                 type(access["barrier_multiplier"]) not in (int, float)

@@ -2,8 +2,16 @@ from dataclasses import replace
 
 import pytest
 
-from campus_sim.domain import (Config, academic_event, action_choice, next_mood, next_stress,
-                               policy_components, policy_context, unit)
+from campus_sim.domain import (
+    Config,
+    academic_event,
+    action_choice,
+    next_mood,
+    next_stress,
+    policy_components,
+    policy_context,
+    unit,
+)
 from campus_sim.language import language_backend
 from campus_sim.population import make_population, make_staff
 
