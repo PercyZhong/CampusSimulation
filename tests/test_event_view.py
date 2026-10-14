@@ -32,3 +32,9 @@ def test_model_decision_is_a_filterable_action(tmp_path):
     event = {"day": 1, "actor": "s000", "action": "model_decision", "status": "completed"}
     (tmp_path / "events.jsonl").write_text(json.dumps(event) + "\n", encoding="utf-8")
     assert read_events(tmp_path, action="model_decision")["events"] == [event]
+
+
+def test_staff_follow_up_is_a_filterable_action(tmp_path):
+    event = {"day": 4, "actor": "s000", "action": "staff_follow_up", "status": "completed"}
+    (tmp_path / "events.jsonl").write_text(json.dumps(event) + "\n", encoding="utf-8")
+    assert read_events(tmp_path, action="staff_follow_up")["events"] == [event]

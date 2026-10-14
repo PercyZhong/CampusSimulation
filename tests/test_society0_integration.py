@@ -181,9 +181,10 @@ def test_follow_up_component_records_once_and_updates_student(tmp_path):
                 requested = await actions.bound(scope).invoke(
                     "campus.request", Ref("campus", "student", "s000"), {})
                 assert requested.status == "completed"
-            with InteractionScope("c000", Moment(1, "staff_shift")) as scope:
-                await actions.bound(scope).invoke(
+            with InteractionScope("c000", Moment(2, "staff_shift")) as scope:
+                shift = await actions.bound(scope).invoke(
                     "campus.staff_shift", Ref("campus", "staff", "c000"), {})
+                assert shift.status == "completed"
             with InteractionScope("s000", Moment(2, "decide")) as scope:
                 accepted = await actions.bound(scope).invoke(
                     "campus.accept_support", Ref("campus", "student", "s000"), {})
@@ -198,6 +199,7 @@ def test_follow_up_component_records_once_and_updates_student(tmp_path):
             state = store.read(lambda view: json.loads(view.query(
                 "SELECT body FROM campus_students WHERE id='s000'", max_rows=1)[0][0]))
             assert state["follow_up_sent"] is True
+            assert state["recent_events"][-1]["action"] == "staff_follow_up"
 
     asyncio.run(exercise())
 
