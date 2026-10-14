@@ -2,7 +2,7 @@
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
@@ -23,6 +23,7 @@ class Config:
     model_id: str | None = None
     max_model_calls: int = 0
     model_temperature: float = 0.2
+    policy_components: dict = field(default_factory=dict)
 
     @classmethod
     def parse(cls, raw):
@@ -59,29 +60,63 @@ class Config:
             raise ValueError("access_barrier must be in [0,1]")
         if type(value.model_temperature) not in (int, float) or not 0 <= value.model_temperature <= 2:
             raise ValueError("model_temperature must be in [0,2]")
+        if not isinstance(value.policy_components, dict):
+            raise ValueError("policy_components must be an object")
+        unknown = set(value.policy_components) - {"information_delivery", "access", "service"}
+        if unknown:
+            raise ValueError(f"unknown policy components: {sorted(unknown)}")
+        for name, component in value.policy_components.items():
+            if not isinstance(component, dict):
+                raise ValueError(f"policy component {name} must be an object")
+        access = value.policy_components.get("access", {})
+        if "barrier_multiplier" in access and (
+                type(access["barrier_multiplier"]) not in (int, float)
+                or not 0 <= access["barrier_multiplier"] <= 1):
+            raise ValueError("barrier_multiplier must be in [0,1]")
+        service = value.policy_components.get("service", {})
+        for key in ("capacity", "open_every"):
+            if key in service and (type(service[key]) is not int or service[key] < 1):
+                raise ValueError(f"policy service {key} must be a positive integer")
+        if service.get("capacity", value.capacity) > value.n_staff * 3:
+            raise ValueError("policy service capacity exceeds configured staff slots")
         return value
+
+
+def policy_components(config):
+    """Return explicit, auditable policy components with condition defaults."""
+    defaults = {
+        "information_delivery": {
+            "enabled": config.condition == "outreach", "day": config.outreach_day},
+        "access": {
+            "barrier_multiplier": 0.45 if config.condition == "easier_access" else 1.0},
+        "service": {"capacity": config.capacity, "open_every": config.open_every},
+    }
+    for name, values in config.policy_components.items():
+        defaults[name].update(values)
+    return defaults
 
 
 def policy_context(config, student, day):
     """Explain the active intervention without exposing hidden student state."""
-    informed = config.condition == "outreach" and student["outreach_seen"]
+    components = policy_components(config)
+    informed = components["information_delivery"]["enabled"] and student["outreach_seen"]
     if student["pending_day"] is not None or student["supported"]:
         actions = ["attend", "rest", "peer"]
         if student["pending_day"] is not None:
             actions.append("accept_support")
         opportunity = False
     else:
-        barrier = config.access_barrier * (0.45 if config.condition == "easier_access" else 1)
+        barrier = config.access_barrier * components["access"]["barrier_multiplier"]
         propensity = 0.14 + 0.48 * student["willingness"] + 0.14 * (1 - student["connection"])
         if informed:
             propensity += 0.16
         opportunity = unit(config.seed, "request_opportunity", day, student["id"]) < clamp(
             propensity - barrier
-        ) and day % config.open_every == 0
+        ) and day % components["service"]["open_every"] == 0
         actions = ["attend", "rest", "peer"]
         if opportunity:
             actions.append("request")
-    barrier = config.access_barrier * (0.45 if config.condition == "easier_access" else 1)
+    barrier = config.access_barrier * components["access"]["barrier_multiplier"]
     common = {"request_available_today": "request" in actions,
               "available_actions": actions,
               "effective_access_barrier": round(barrier, 6)}
@@ -89,14 +124,14 @@ def policy_context(config, student, day):
         return {**common, "name": "outreach",
                 "intervention": "已收到主动关怀提供的一般支持服务信息。",
                 "guidance": "收到信息后，可根据需要考虑校园支持服务。",
-                "information_received": True}
+                "information_received": True, "components": components}
     if config.condition == "easier_access":
         return {**common, "name": "easier_access", "intervention": "咨询服务更容易获得；求助门槛降低。",
                 "guidance": "当支持有帮助且门槛较低时，可以提出请求；也可以选择其他行动。",
-                "information_received": False}
+                "information_received": False, "components": components}
     return {**common, "name": "baseline", "intervention": "现状规则；没有额外主动关怀，求助门槛保持基线。",
             "guidance": "根据当前状态自行判断是否请求支持或选择其他行动。",
-            "information_received": False}
+            "information_received": False, "components": components}
 
 
 def unit(seed, stream, *parts):

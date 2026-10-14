@@ -84,11 +84,11 @@ def build(raw):
                               max_activations=config.n_students + config.n_staff),
                campus_schedule_plugin(config, ids, staff_ids)]
     public = asdict(config)
-    public["release"] = raw.get("release", {"scenario": "0.5.0"})
+    public["release"] = raw.get("release", {"scenario": "0.6.0"})
     config_hash = hashlib.sha256(json.dumps(public, sort_keys=True,
                                 separators=(",", ":")).encode()).hexdigest()
     return RunPlan(plugins, RunContract(
-        release={"scenario": "0.5.0", "scenario_git": _git_sha(), "society0_git": SOCIETY0_SHA},
+        release={"scenario": "0.6.0", "scenario_git": _git_sha(), "society0_git": SOCIETY0_SHA},
         dependencies={"python": sys.version.split()[0], "society0_git": SOCIETY0_SHA},
         configuration={"plugins": {"campus": public},
                        "actors": [*staff_ids, *ids], "models": (

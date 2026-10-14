@@ -2,7 +2,8 @@ from dataclasses import replace
 
 import pytest
 
-from campus_sim.domain import Config, academic_event, action_choice, next_mood, next_stress, unit
+from campus_sim.domain import (Config, academic_event, action_choice, next_mood, next_stress,
+                               policy_components, policy_context, unit)
 from campus_sim.language import language_backend
 from campus_sim.population import make_population, make_staff
 
@@ -22,6 +23,11 @@ def test_configuration_and_named_streams():
         Config.parse({"language_backend": "remote"})
     assert unit(11, "choice", 1, "s000") == unit(11, "choice", 1, "s000")
     assert unit(11, "choice", 1, "s000") != unit(11, "academic_event", 1, "s000")
+    components = policy_components(Config(condition="easier_access"))
+    assert components["access"]["barrier_multiplier"] == 0.45
+    assert components["service"] == {"capacity": 3, "open_every": 1}
+    context = policy_context(Config(), make_population(Config())[0][0], 1)
+    assert set(context["components"]) == {"information_delivery", "access", "service"}
 
 
 def test_synthetic_population_is_shared_across_conditions():

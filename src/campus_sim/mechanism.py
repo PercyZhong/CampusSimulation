@@ -5,7 +5,7 @@ import json
 from society0.kernel.interaction import Action, ActionResult, DocumentChunk, Ref
 from society0.kernel.plugins import Plugin
 
-from .domain import academic_event, clamp, next_mood, next_stress, policy_context, unit
+from .domain import academic_event, clamp, next_mood, next_stress, policy_components, policy_context, unit
 from .language import language_backend
 from .population import make_population, make_staff
 
@@ -54,7 +54,7 @@ class Campus:
     def available_slots(self, view, day):
         rows = view.query("SELECT COALESCE(SUM(slots),0) FROM campus_staff_shifts WHERE day=?",
                           (day,))
-        return min(self.config.capacity, rows[0][0])
+        return min(policy_components(self.config)["service"]["capacity"], rows[0][0])
 
     def staff_shift(self, scope, target):
         day, actor = scope.moment.time, scope.actor
@@ -85,7 +85,8 @@ class Campus:
     def prepare(self, day):
         load = academic_event(self.config.seed, day)
         def write(writer):
-            if self.config.condition == "outreach" and day == self.config.outreach_day:
+            delivery = policy_components(self.config)["information_delivery"]
+            if delivery["enabled"] and day == delivery["day"]:
                 # Every synthetic actor sees general service information; no private-state targeting.
                 for sid, body in list(writer.iter_query("SELECT id,body FROM campus_students ORDER BY id")):
                     state = json.loads(body)
@@ -116,7 +117,8 @@ class Campus:
                 reason = "already_pending"
             if action == "request" and state["supported"]:
                 reason = "already_supported"
-            if action == "request" and day % self.config.open_every != 0:
+            open_every = policy_components(self.config)["service"]["open_every"]
+            if action == "request" and day % open_every != 0:
                 reason = "service_closed"
             if (self.config.driver == "llm" and action == "request"
                     and not policy_context(self.config, state, day)["request_available_today"]):
@@ -126,7 +128,7 @@ class Campus:
                 used = writer.query("SELECT used FROM campus_service_usage WHERE day=?", (day,))
                 if state["pending_day"] is None:
                     reason = "no_pending_request"
-                elif day % self.config.open_every != 0:
+                elif day % open_every != 0:
                     reason = "service_closed"
                 elif not first or first[0][0] != actor:
                     reason = "queue_turn"
@@ -257,11 +259,10 @@ class CampusInformation:
                                                   "supported", "pending_day", "outreach_seen", "recent_events",
                                                   "social_memory")}
         elif ref.kind == "service":
-            barrier = self.campus.config.access_barrier
-            if self.campus.config.condition == "easier_access":
-                barrier *= 0.45
-            data = {"open": scope.moment.time % self.campus.config.open_every == 0,
-                    "capacity": self.campus.config.capacity,
+            components = policy_components(self.campus.config)
+            barrier = self.campus.config.access_barrier * components["access"]["barrier_multiplier"]
+            data = {"open": scope.moment.time % components["service"]["open_every"] == 0,
+                    "capacity": components["service"]["capacity"],
                     "access_barrier": barrier,
                     "available_slots": self.campus.store.read(lambda view:
                         self.campus.available_slots(view, scope.moment.time))}
