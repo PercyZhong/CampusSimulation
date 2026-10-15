@@ -150,7 +150,7 @@ def test_peer_action_records_partner_dialogue_and_updates_partner(tmp_path):
                 max_rows=1))[0][0]
             detail = json.loads(event)
             assert detail["partner"] in {"s001", "s002"}
-                assert len(detail["turns"]) == 4
+            assert len(detail["turns"]) == 4
             student = store.read(lambda view: json.loads(view.query(
                 "SELECT body FROM campus_students WHERE id='s000'", max_rows=1)[0][0]))
             partner = store.read(lambda view: json.loads(view.query(
