@@ -222,15 +222,17 @@ class Campus:
             follow_up = policy_components(self.config)["follow_up"]
             follow_used = self.follow_up_slots_used(writer, day)
             if follow_up["enabled"]:
-                for sid, body in list(writer.iter_query("SELECT id,body FROM campus_students ORDER BY id")):
-                    if served + follow_used >= available:
-                        break
+                candidates = []
+                for sid, body in writer.iter_query("SELECT id,body FROM campus_students"):
                     state = json.loads(body)
                     due = (state["supported_day"] is not None
                            and not state["follow_up_sent"]
                            and day - state["supported_day"] >= follow_up["days_after_support"])
-                    if not due:
-                        continue
+                    if due:
+                        candidates.append((state["supported_day"], sid, state))
+                for _, sid, state in sorted(candidates):
+                    if served + follow_used >= available:
+                        break
                     state["follow_up_sent"] = True
                     state["stress"] = clamp(state["stress"] - 0.04)
                     state["mood"] = clamp(state["mood"] + 0.03)
