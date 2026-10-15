@@ -8,9 +8,9 @@ from society0.kernel.plugins import Plugin
 from .domain import (
     academic_event,
     clamp,
+    memory_context,
     next_mood,
     next_stress,
-    memory_context,
     policy_components,
     policy_context,
     unit,
