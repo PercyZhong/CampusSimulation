@@ -171,8 +171,9 @@ def test_follow_up_component_records_once_and_updates_student(tmp_path):
     from campus_sim.plan import build
 
     raw = json.loads(Path("configs/baseline.json").read_text(encoding="utf-8"))
-    raw.update(end=5, n_students=1, policy_components={
-        **raw["policy_components"], "follow_up": {"enabled": True, "days_after_support": 2}})
+    raw.update(end=6, n_students=1, policy_components={
+        **raw["policy_components"], "service": {"capacity": 1, "open_every": 1},
+        "follow_up": {"enabled": True, "days_after_support": 2}})
 
     async def exercise():
         async with compose(tmp_path / "follow-up", build(raw).plugins) as host:
@@ -190,16 +191,35 @@ def test_follow_up_component_records_once_and_updates_student(tmp_path):
                     "campus.accept_support", Ref("campus", "student", "s000"), {})
                 assert accepted.status == "completed"
             campus = host.service("campus", "campus")
-            campus.prepare(4)
-            campus.prepare(5)
             store = host.service("storage", "store")
+            store.transaction(lambda writer: writer.execute(
+                "INSERT INTO campus_service_usage VALUES(?,?)", (4, 1)))
+            campus.prepare(4)
+            with InteractionScope("c000", Moment(4, "staff_shift")) as scope:
+                shift = await actions.bound(scope).invoke(
+                    "campus.staff_shift", Ref("campus", "staff", "c000"), {})
+                assert shift.status == "completed"
+            campus.settle(4, 0.0)
+            state = store.read(lambda view: json.loads(view.query(
+                "SELECT body FROM campus_students WHERE id='s000'", max_rows=1)[0][0]))
+            assert state["follow_up_sent"] is False
+            with InteractionScope("c000", Moment(5, "staff_shift")) as scope:
+                shift = await actions.bound(scope).invoke(
+                    "campus.staff_shift", Ref("campus", "staff", "c000"), {})
+                assert shift.status == "completed"
+            campus.prepare(5)
+            campus.settle(5, 0.0)
+            campus.prepare(6)
+            campus.settle(6, 0.0)
             events = store.read(lambda view: view.query(
                 "SELECT day,action FROM campus_events WHERE action='staff_follow_up'"))
-            assert events == [(4, "staff_follow_up")]
+            assert events == [(5, "staff_follow_up")]
             state = store.read(lambda view: json.loads(view.query(
                 "SELECT body FROM campus_students WHERE id='s000'", max_rows=1)[0][0]))
             assert state["follow_up_sent"] is True
             assert state["recent_events"][-1]["action"] == "staff_follow_up"
+            assert store.read(lambda view: view.query(
+                "SELECT used FROM campus_follow_up_usage WHERE day=5")) == [(1,)]
 
     asyncio.run(exercise())
 

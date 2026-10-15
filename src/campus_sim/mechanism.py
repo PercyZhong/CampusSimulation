@@ -25,6 +25,7 @@ SCHEMA = (
     "CREATE TABLE campus_edges(a TEXT NOT NULL,b TEXT NOT NULL,PRIMARY KEY(a,b))",
     "CREATE TABLE campus_queue(actor TEXT NOT NULL PRIMARY KEY, requested_day INTEGER NOT NULL, ordinal INTEGER NOT NULL UNIQUE)",
     "CREATE TABLE campus_service_usage(day INTEGER PRIMARY KEY, used INTEGER NOT NULL)",
+    "CREATE TABLE campus_follow_up_usage(day INTEGER PRIMARY KEY, used INTEGER NOT NULL)",
     "CREATE TABLE campus_events(ordinal INTEGER PRIMARY KEY,day INTEGER NOT NULL,actor TEXT NOT NULL,action TEXT NOT NULL,status TEXT NOT NULL,reason TEXT,detail TEXT NOT NULL)",
     "CREATE TABLE campus_days(day INTEGER PRIMARY KEY,body TEXT NOT NULL)",
 )
@@ -64,6 +65,11 @@ class Campus:
                           (day,))
         return min(policy_components(self.config)["service"]["capacity"], rows[0][0])
 
+    @staticmethod
+    def follow_up_slots_used(view, day):
+        rows = view.query("SELECT used FROM campus_follow_up_usage WHERE day=?", (day,))
+        return rows[0][0] if rows else 0
+
     def staff_shift(self, scope, target):
         day, actor = scope.moment.time, scope.actor
         if target.key != actor:
@@ -101,21 +107,6 @@ class Campus:
                     state["outreach_seen"] = True
                     writer.execute("UPDATE campus_students SET body=? WHERE id=?", (dumps(state), sid))
                     self.event(writer, day, sid, "outreach_information", "completed")
-            follow_up = policy_components(self.config)["follow_up"]
-            if follow_up["enabled"]:
-                for sid, body in list(writer.iter_query("SELECT id,body FROM campus_students ORDER BY id")):
-                    state = json.loads(body)
-                    due = (state["supported_day"] is not None
-                           and not state["follow_up_sent"]
-                           and day - state["supported_day"] >= follow_up["days_after_support"])
-                    if due:
-                        state["follow_up_sent"] = True
-                        state["stress"] = clamp(state["stress"] - 0.04)
-                        state["mood"] = clamp(state["mood"] + 0.03)
-                        self.remember(state, {"day": day, "action": "staff_follow_up", "status": "completed"})
-                        writer.execute("UPDATE campus_students SET body=? WHERE id=?", (dumps(state), sid))
-                        self.event(writer, day, sid, "staff_follow_up", "completed",
-                                   detail={"days_after_support": follow_up["days_after_support"]})
         self.store.transaction(write)
         return load
 
@@ -155,7 +146,8 @@ class Campus:
                     reason = "service_closed"
                 elif not first or first[0][0] != actor:
                     reason = "queue_turn"
-                elif (used[0][0] if used else 0) >= self.available_slots(writer, day):
+                elif ((used[0][0] if used else 0) + self.follow_up_slots_used(writer, day)
+                      >= self.available_slots(writer, day)):
                     reason = "capacity_full"
             if action == "peer":
                 peers = writer.query(
@@ -225,8 +217,32 @@ class Campus:
             usage = writer.query("SELECT used FROM campus_service_usage WHERE day=?", (day,))
             served = usage[0][0] if usage else 0
             available = self.available_slots(writer, day)
-            if served > available:
-                raise ValueError("service usage exceeds registered staff slots")
+            if served + self.follow_up_slots_used(writer, day) > available:
+                raise ValueError("staff usage exceeds registered staff slots")
+            follow_up = policy_components(self.config)["follow_up"]
+            follow_used = self.follow_up_slots_used(writer, day)
+            if follow_up["enabled"]:
+                for sid, body in list(writer.iter_query("SELECT id,body FROM campus_students ORDER BY id")):
+                    if served + follow_used >= available:
+                        break
+                    state = json.loads(body)
+                    due = (state["supported_day"] is not None
+                           and not state["follow_up_sent"]
+                           and day - state["supported_day"] >= follow_up["days_after_support"])
+                    if not due:
+                        continue
+                    state["follow_up_sent"] = True
+                    state["stress"] = clamp(state["stress"] - 0.04)
+                    state["mood"] = clamp(state["mood"] + 0.03)
+                    self.remember(state, {"day": day, "action": "staff_follow_up", "status": "completed"})
+                    writer.execute("UPDATE campus_students SET body=? WHERE id=?", (dumps(state), sid))
+                    follow_used += 1
+                    self.event(writer, day, sid, "staff_follow_up", "completed",
+                               detail={"days_after_support": follow_up["days_after_support"],
+                                       "service_slot": served + follow_used})
+                if follow_used != self.follow_up_slots_used(writer, day):
+                    writer.execute("INSERT INTO campus_follow_up_usage VALUES(?,?) ON CONFLICT(day) DO UPDATE SET used=?",
+                                   (day, follow_used, follow_used))
             states = []
             for actor, body in list(writer.iter_query("SELECT id,body FROM campus_students ORDER BY id")):
                 state = json.loads(body)
@@ -245,6 +261,7 @@ class Campus:
                 "day": day, "academic_load": load, "requested": sum(s["ever_requested"] for s in states),
                 "supported": sum(s["ever_supported"] for s in states), "served_today": served,
                 "available_slots": available,
+                "follow_ups_today": follow_used,
                 "pending": sum(s["pending_day"] is not None for s in states),
                 "low_connection_7d": sum(s["low_streak"] >= 7 for s in states),
                 "mean_stress": round(sum(s["stress"] for s in states) / len(states), 6),
@@ -326,7 +343,7 @@ def campus_plugin(config):
             actions.register(Action("campus." + name, ("campus", "student"), name, schema,
                 lambda scope, target, args, name=name: campus.act(scope, target, name),
                 available=lambda scope, target: target.key == scope.actor),
-                dependencies=("campus_students", "campus_queue", "campus_edges", "campus_service_usage"))
+                dependencies=("campus_students", "campus_queue", "campus_edges", "campus_service_usage", "campus_follow_up_usage"))
         actions.register(Action("campus.staff_shift", ("campus", "staff"), "staff_shift", schema,
             lambda scope, target, args: campus.staff_shift(scope, target),
             available=lambda scope, target: target.key == scope.actor),

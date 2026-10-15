@@ -86,13 +86,18 @@ def summarize(run_dir):
             "mean": sum(changes) / n, "max": max(changes)}
         summary["mood_distribution"] = {"min": min(moods),
             "mean": sum(moods) / n, "max": max(moods)}
+    follow_ups = [e for e in events if e["action"] == "staff_follow_up"
+                  and e["status"] == "completed"]
+    summary["follow_up_total"] = len(follow_ups)
+    if len(follow_ups) != sum(d.get("follow_ups_today", 0) for d in days):
+        raise ValueError("follow-up events and daily usage disagree")
     shifts = [e for e in events if e["action"] == "staff_shift"
               and e["status"] == "completed"]
     if shifts:
         summary["staff_shift_count"] = len(shifts)
         summary["available_slots_total"] = sum(d["available_slots"] for d in days)
-        if any(d["served_today"] > d["available_slots"] for d in days):
-            raise ValueError("service usage exceeds staff slots")
+        if any(d["served_today"] + d.get("follow_ups_today", 0) > d["available_slots"] for d in days):
+            raise ValueError("staff usage exceeds staff slots")
     summary["supported_rate"] = summary["supported_count"] / n
     summary["low_connection_7d_rate"] = summary["low_connection_7d_count"] / n
     if summary["supported_count"] != summary["served_total"] or summary["supported_count"] != len(waits):
