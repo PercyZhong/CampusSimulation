@@ -168,9 +168,10 @@ def test_daily_metrics_expose_emotional_feedback_components(tmp_path):
     import asyncio
     import csv
 
+    from society0.kernel.runner import run_plan
+
     from campus_sim.analysis import export
     from campus_sim.plan import build
-    from society0.kernel.runner import run_plan
 
     raw = json.loads(Path("configs/baseline.json").read_text(encoding="utf-8"))
     raw.update(end=1, n_students=3)
