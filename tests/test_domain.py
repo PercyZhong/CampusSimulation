@@ -71,10 +71,30 @@ def test_sustained_workload_retains_stress_range():
     assert 0 <= next_mood(0.5, stress, 0.3, True) <= 1
 
 
+def test_action_feedback_is_bounded_and_directional():
+    assert next_stress(0.8, 0.5, 0.0, True) < 0.8
+    assert next_mood(0.5, 0.2, 0.8, True) > 0.5
+    assert next_stress(0.99, 0.0, 1.0, False) <= 1
+    assert next_mood(0.01, 1.0, 0.0, False) >= 0
+
+
 def test_offline_language_is_reproducible():
     backend = language_backend("offline")
     assert backend.peer_message(seed=11, day=1, actor="s000") == backend.peer_message(
         seed=11, day=1, actor="s000")
     dialogue = backend.peer_dialogue(seed=11, day=1, actor="s000", partner="s001")
-    assert [turn["speaker"] for turn in dialogue] == ["s000", "s001"]
+    assert [turn["speaker"] for turn in dialogue] == ["s000", "s001", "s000", "s001"]
     assert dialogue == backend.peer_dialogue(seed=11, day=1, actor="s000", partner="s001")
+
+
+def test_peer_dialogue_uses_agent_state_and_memory():
+    backend = language_backend("offline")
+    dialogue = backend.peer_dialogue(
+        seed=11, day=1, actor="s000", partner="s001",
+        actor_state={"stress": 0.8, "connection": 0.6},
+        partner_state={"stress": 0.4, "mood": 0.8},
+        shared_memory=[{"partner": "s001", "day": 1}],
+    )
+    assert "压力" in dialogue[0]["text"]
+    assert "笔记" in dialogue[1]["text"]
+    assert "上次" in dialogue[2]["text"]

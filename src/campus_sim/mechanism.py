@@ -171,13 +171,17 @@ class Campus:
                 state["ever_supported"] = True
                 state["supported_day"] = day
                 state["stress"] = clamp(state["stress"] - 0.1)
+                state["mood"] = clamp(state["mood"] + 0.04)
                 writer.execute("DELETE FROM campus_queue WHERE actor=?", (actor,))
                 writer.execute("INSERT INTO campus_service_usage VALUES(?,1) ON CONFLICT(day) DO UPDATE SET used=used+1", (day,))
             elif action == "rest":
                 state["recovery"] = clamp(state["recovery"] + 0.09)
+                state["stress"] = clamp(state["stress"] - 0.025)
+                state["mood"] = clamp(state["mood"] + 0.015)
             elif action == "peer":
                 partner = peers[int(unit(self.config.seed, "peer_partner", day, actor) * len(peers))][0]
                 state["connection"] = clamp(state["connection"] + 0.045)
+                state["mood"] = clamp(state["mood"] + 0.02)
             elif action == "attend":
                 state["willingness"] = clamp(state["willingness"] + 0.005)
             else:
@@ -189,12 +193,15 @@ class Campus:
                 partner_rows = writer.query("SELECT body FROM campus_students WHERE id=?", (partner,), max_rows=1)
                 partner_state = json.loads(partner_rows[0][0])
                 partner_state["connection"] = clamp(partner_state["connection"] + 0.02)
+                partner_state["mood"] = clamp(partner_state["mood"] + 0.01)
                 writer.execute("UPDATE campus_students SET body=? WHERE id=?",
                                (dumps(partner_state), partner))
             detail = ({"wait_days": wait} if action == "accept_support" else
                       {"partner": partner,
-                       "turns": self.language.peer_dialogue(seed=self.config.seed, day=day,
-                                                              actor=actor, partner=partner),
+                       "turns": self.language.peer_dialogue(
+                           seed=self.config.seed, day=day, actor=actor, partner=partner,
+                           actor_state=state, partner_state=partner_state,
+                           shared_memory=state.get("social_memory", [])),
                        "backend": self.language.backend}
                       if action == "peer" else None)
             memory = {"day": day, "action": action, "status": "completed"}
