@@ -127,6 +127,7 @@ class Campus:
             if not rows:
                 return {"status": "rejected", "reason": "unknown_actor"}
             state = json.loads(rows[0][0])
+            before = {key: state[key] for key in ("stress", "mood", "recovery", "connection")}
             reason = None
             if action == "request" and state["pending_day"] is not None:
                 reason = "already_pending"
@@ -215,6 +216,17 @@ class Campus:
                                (dumps(partner_state), partner))
             self.remember(state, memory)
             writer.execute("UPDATE campus_students SET body=? WHERE id=?", (dumps(state), actor))
+            if action == "peer":
+                feedback = {key: round(state[key] - before[key], 6)
+                            for key in before if state[key] != before[key]}
+                feedback["partner_connection_delta"] = 0.02
+                feedback["partner_mood_delta"] = 0.01
+            else:
+                feedback = {key: round(state[key] - before[key], 6)
+                            for key in before if state[key] != before[key]}
+            if detail is None:
+                detail = {}
+            detail["feedback"] = feedback
             self.event(writer, day, actor, action, "completed",
                        detail=detail)
             return {"status": "completed", "action": action}
@@ -255,8 +267,10 @@ class Campus:
                     writer.execute("INSERT INTO campus_follow_up_usage VALUES(?,?) ON CONFLICT(day) DO UPDATE SET used=?",
                                    (day, follow_used, follow_used))
             states = []
+            before_states = []
             for actor, body in list(writer.iter_query("SELECT id,body FROM campus_students ORDER BY id")):
                 state = json.loads(body)
+                before_states.append(state.copy())
                 if state["pending_day"] is not None and day > state["pending_day"]:
                     state["wait_days"] += 1
                 state["stress"] = next_stress(state["stress"], state["recovery"],
@@ -279,6 +293,12 @@ class Campus:
                 "mean_mood": round(sum(s["mood"] for s in states) / len(states), 6),
                 "mean_stress_change": round(sum(s["stress"] - s["initial_stress"]
                                                  for s in states) / len(states), 6),
+                "mean_stress_before": round(sum(s["stress"] for s in before_states) / len(states), 6),
+                "mean_mood_before": round(sum(s["mood"] for s in before_states) / len(states), 6),
+                "mean_stress_delta": round(sum(s["stress"] - b["stress"]
+                                                for s, b in zip(states, before_states)) / len(states), 6),
+                "mean_mood_delta": round(sum(s["mood"] - b["mood"]
+                                              for s, b in zip(states, before_states)) / len(states), 6),
             }
             writer.execute("INSERT INTO campus_days VALUES(?,?)", (day, dumps(metrics)))
             return metrics
