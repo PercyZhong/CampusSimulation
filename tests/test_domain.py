@@ -8,6 +8,7 @@ from campus_sim.domain import (
     action_choice,
     next_mood,
     next_stress,
+    memory_context,
     policy_components,
     policy_context,
     unit,
@@ -76,6 +77,13 @@ def test_action_feedback_is_bounded_and_directional():
     assert next_mood(0.5, 0.2, 0.8, True) > 0.5
     assert next_stress(0.99, 0.0, 1.0, False) <= 1
     assert next_mood(0.01, 1.0, 0.0, False) >= 0
+
+
+def test_memory_context_applies_recency_weights_without_mutating_events():
+    events = [{"day": 1, "action": "rest"}, {"day": 4, "action": "peer"}]
+    weighted = memory_context(events, day=5)
+    assert [item["recency_weight"] for item in weighted] == [0.2, 0.5]
+    assert events == [{"day": 1, "action": "rest"}, {"day": 4, "action": "peer"}]
 
 
 def test_offline_language_is_reproducible():

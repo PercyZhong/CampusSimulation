@@ -150,6 +150,16 @@ def clamp(value):
     return round(min(1.0, max(0.0, value)), 6)
 
 
+def memory_context(events, day, limit=5):
+    """Return auditable recency-weighted memory without deleting raw events."""
+    weighted = []
+    for event in events[-limit:]:
+        event_day = event.get("day", day)
+        age = max(0, day - event_day)
+        weighted.append({**event, "recency_weight": round(1 / (1 + age), 6)})
+    return weighted
+
+
 def academic_event(seed, day):
     return round(0.04 + 0.12 * unit(seed, "academic_event", day), 6)
 

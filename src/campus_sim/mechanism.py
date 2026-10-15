@@ -10,6 +10,7 @@ from .domain import (
     clamp,
     next_mood,
     next_stress,
+    memory_context,
     policy_components,
     policy_context,
     unit,
@@ -201,7 +202,8 @@ class Campus:
                        "turns": self.language.peer_dialogue(
                            seed=self.config.seed, day=day, actor=actor, partner=partner,
                            actor_state=state, partner_state=partner_state,
-                           shared_memory=state.get("social_memory", [])),
+                           shared_memory=memory_context(
+                               state.get("social_memory", []), day)),
                        "backend": self.language.backend}
                       if action == "peer" else None)
             memory = {"day": day, "action": action, "status": "completed"}
@@ -308,6 +310,10 @@ class CampusInformation:
             data = {key: state[key] for key in ("id", "stress", "mood", "recovery", "connection", "willingness",
                                                   "supported", "pending_day", "outreach_seen", "recent_events",
                                                   "social_memory", "supported_day", "follow_up_sent")}
+            data["memory_context"] = {
+                "recent_events": memory_context(state["recent_events"], scope.moment.time),
+                "social_memory": memory_context(state["social_memory"], scope.moment.time),
+            }
         elif ref.kind == "service":
             components = policy_components(self.campus.config)
             barrier = self.campus.config.access_barrier * components["access"]["barrier_multiplier"]
