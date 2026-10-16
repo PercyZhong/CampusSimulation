@@ -1,0 +1,32 @@
+{
+  "protocol_id": "v063-formal-matrix-v1",
+  "days": 10,
+  "n_students": 40,
+  "n_staff": 2,
+  "seeds": [11, 22, 33],
+  "conditions": ["baseline", "outreach", "easier_access"],
+  "drivers": [
+    {"name": "rule", "provider": null, "model": null, "temperature": null, "max_model_calls": 0},
+    {"name": "qwen", "provider": "qwen", "model": "qwen-plus", "temperature": 0.2, "max_model_calls": 900},
+    {"name": "deepseek", "provider": "deepseek", "model": "deepseek-chat", "temperature": 0.2, "max_model_calls": 900}
+  ],
+  "base_configs": {
+    "baseline": "configs/baseline.json",
+    "outreach": "configs/outreach.json",
+    "easier_access": "configs/easier_access.json"
+  },
+  "output_pattern": "runs/v063-matrix-{driver}-{condition}-seed{seed}-10d",
+  "primary_metrics": [
+    "requested_rate", "supported_rate", "completed_wait_mean_days",
+    "low_connection_7d_rate", "mean_stress_final", "mean_mood_final",
+    "action_selection_rate", "peer_dialogue_valid_rate", "model_calls"
+  ],
+  "comparison": {
+    "pairing": "same condition and seed across drivers; same driver and seed across conditions",
+    "summary": "mean and sample standard deviation across the three seeds",
+    "policy_effect": "paired condition difference within driver and seed",
+    "model_effect": "descriptive difference between drivers within condition and seed",
+    "minimum_replicates": 3,
+    "causal_claims": false
+  }
+}
