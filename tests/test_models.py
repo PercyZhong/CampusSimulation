@@ -5,7 +5,13 @@ import json
 import pytest
 
 from campus_sim.domain import Config, policy_context
-from campus_sim.models import DECISION_PROMPT_VERSION, HandshakeTimeout, ModelClient, _action, choices
+from campus_sim.models import (
+    DECISION_PROMPT_VERSION,
+    HandshakeTimeout,
+    ModelClient,
+    _action,
+    choices,
+)
 
 
 @pytest.mark.parametrize("provider,key_name", [
