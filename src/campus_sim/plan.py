@@ -16,7 +16,7 @@ from society0.kernel.runtime import DriverResult, runtime_plugin
 from . import SOCIETY0_SHA
 from .domain import Config, action_choice, policy_context
 from .mechanism import campus_plugin
-from .models import ModelClient
+from .models import DECISION_PROMPT_VERSION, ModelClient
 from .schedule import campus_schedule_plugin
 
 
@@ -58,6 +58,16 @@ def build(raw):
             await session.actions.invoke("campus.model_decision", Ref("campus", "student", actor),
                 {"action": action, "provider": config.model_provider,
                  "model": config.model_id, "temperature": config.model_temperature,
+                 "prompt_version": DECISION_PROMPT_VERSION,
+                 "decision_context": {
+                     "available_actions": policy["available_actions"],
+                     "connection": state["connection"], "stress": state["stress"],
+                     "mood": state["mood"], "pending_request": state["pending_day"] is not None,
+                     "recent_peer_contacts": sum(
+                         event["action"] == "peer"
+                         for event in state["recent_events"]),
+                     "social_memory_count": len(state["social_memory"]),
+                 },
                  "policy": policy, "usage": usage})
         result = await session.actions.invoke("campus." + action,
                                                Ref("campus", "student", actor), {})

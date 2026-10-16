@@ -386,8 +386,10 @@ def campus_plugin(config):
         decision_schema = {"type": "object", "properties": {
             "action": {"type": "string"}, "provider": {"type": "string"},
             "model": {"type": "string"}, "temperature": {"type": "number"},
+            "prompt_version": {"type": "string"}, "decision_context": {"type": "object"},
             "policy": {"type": "object"}, "usage": {"type": "object"}},
-            "required": ["action", "provider", "model", "temperature", "policy", "usage"],
+            "required": ["action", "provider", "model", "temperature", "prompt_version",
+                         "decision_context", "policy", "usage"],
             "additionalProperties": False}
         actions.register(Action("campus.model_decision", ("campus", "student"),
             "model_decision", decision_schema,

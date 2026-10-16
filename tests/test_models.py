@@ -1,9 +1,11 @@
 """Provider requests use a local fake; tests never contact a paid API."""
 
+import json
+
 import pytest
 
 from campus_sim.domain import Config, policy_context
-from campus_sim.models import HandshakeTimeout, ModelClient, _action, choices
+from campus_sim.models import DECISION_PROMPT_VERSION, HandshakeTimeout, ModelClient, _action, choices
 
 
 @pytest.mark.parametrize("provider,key_name", [
@@ -154,3 +156,16 @@ def test_llm_actor_run_records_decisions_without_live_network(monkeypatch, tmp_p
     assert summary["action_counts"]["model_decision:completed"] == 2
     assert summary["network_calls"] == summary["paid_model_calls"] == 2
     assert len(requests) == 2
+    for payload in requests:
+        assert "four-turn conversation" in payload["messages"][0]["content"]
+        assert "Do not default to attend" in payload["messages"][0]["content"]
+    events = [json.loads(line) for line in (output / "events.jsonl").read_text(
+        encoding="utf-8").splitlines()]
+    decisions = [event for event in events if event["action"] == "model_decision"]
+    assert len(decisions) == 2
+    for event in decisions:
+        detail = event["detail"]
+        assert detail["prompt_version"] == DECISION_PROMPT_VERSION
+        assert "peer" in detail["decision_context"]["available_actions"]
+        assert detail["decision_context"]["recent_peer_contacts"] == 0
+        assert "student" not in detail["decision_context"]

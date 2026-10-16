@@ -14,6 +14,7 @@ PROVIDERS = {
     "anthropic": {"env": "ANTHROPIC_API_KEY", "models": ("claude-sonnet-4-5", "claude-haiku-4-5")},
 }
 ACTION_NAMES = frozenset(("attend", "rest", "peer", "request", "accept_support"))
+DECISION_PROMPT_VERSION = "peer-context-v1"
 OPENAI_COMPATIBLE = {
     "deepseek": "https://api.deepseek.com/chat/completions",
     "qwen": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
@@ -118,6 +119,13 @@ class ModelClient:
         system = ("You act as one fictional student in a synthetic campus simulation. "
                   "Choose exactly one action from policy.available_actions. "
                   "Return only JSON with an action field. No diagnosis or risk prediction. "
+                  "Consider your current needs and recent_events, social_memory and "
+                  "memory_context before choosing. Attend means participating in campus "
+                  "activities. Rest means taking time to recover. Peer means starting a "
+                  "specific four-turn conversation with a connected student; it can help "
+                  "maintain social connection. When connection is low or recent peer contact "
+                  "is absent, consider peer alongside other available actions. Do not default "
+                  "to attend or choose peer by quota; choose what fits this student's state. "
                   "If pending_day is set, consider accept_support when available. "
                   "The service access_barrier affects whether request is available today; "
                   "outreach_seen records information actually received. "
