@@ -10,6 +10,7 @@ from campus_sim.models import (
     HandshakeTimeout,
     ModelClient,
     _action,
+    _dialogue,
     choices,
 )
 
@@ -104,6 +105,33 @@ def test_handshake_timeout_retries_once_within_call_limit(monkeypatch):
     assert action == "rest" and client.calls == len(attempts) == 2
 
 
+def test_peer_dialogue_uses_shared_call_limit_and_validates_turns(monkeypatch):
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "local-test-key")
+    requests = []
+    turns = [{"speaker": speaker, "text": f"话语 {index}"}
+             for index, speaker in enumerate(("s000", "s001", "s000", "s001"))]
+
+    def fake_post(url, headers, payload):
+        requests.append(payload)
+        return {"choices": [{"message": {"content": json.dumps({"turns": turns})}}],
+                "usage": {"total_tokens": 31}}
+
+    monkeypatch.setattr("campus_sim.models._post", fake_post)
+    client = ModelClient("qwen", "qwen-plus", 1)
+    result, usage = client.peer_dialogue(day=1, actor="s000", partner="s001",
+                                        actor_state={"stress": 0.5},
+                                        partner_state={"mood": 0.5}, shared_memory=[])
+    assert result == turns and usage["total_tokens"] == 31
+    assert requests[0]["max_tokens"] == 500
+    assert requests[0]["messages"][1]["content"]
+    with pytest.raises(RuntimeError, match="limit reached"):
+        client.peer_dialogue(day=2, actor="s000", partner="s001", actor_state={},
+                             partner_state={}, shared_memory=[])
+    with pytest.raises(ValueError, match="speaker or text"):
+        _dialogue(json.dumps({"turns": [{**turns[0], "speaker": "s999"}, *turns[1:]]}),
+                  "s000", "s001")
+
+
 def test_policy_changes_request_opportunity_with_shared_draws():
     student = {"id": "s000", "willingness": 0.5, "connection": 0.5,
                "outreach_seen": False, "pending_day": None, "supported": False}
@@ -164,7 +192,7 @@ def test_llm_actor_run_records_decisions_without_live_network(monkeypatch, tmp_p
     assert len(requests) == 2
     for payload in requests:
         assert "four-turn conversation" in payload["messages"][0]["content"]
-        assert "Do not default to attend" in payload["messages"][0]["content"]
+        assert "When connection is low" not in payload["messages"][0]["content"]
     events = [json.loads(line) for line in (output / "events.jsonl").read_text(
         encoding="utf-8").splitlines()]
     decisions = [event for event in events if event["action"] == "model_decision"]
@@ -175,3 +203,45 @@ def test_llm_actor_run_records_decisions_without_live_network(monkeypatch, tmp_p
         assert "peer" in detail["decision_context"]["available_actions"]
         assert detail["decision_context"]["recent_peer_contacts"] == 0
         assert "student" not in detail["decision_context"]
+
+
+def test_llm_peer_run_records_generated_dialogue_and_two_calls(monkeypatch, tmp_path):
+    import asyncio
+
+    from society0.kernel.runner import run_plan
+
+    from campus_sim.analysis import export
+    from campus_sim.plan import build
+
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "local-test-key")
+    requests = []
+
+    def fake_post(url, headers, payload):
+        requests.append(payload)
+        if payload["max_tokens"] == 80:
+            content = '{"action":"peer"}'
+        else:
+            user = json.loads(payload["messages"][1]["content"])
+            content = json.dumps({"turns": [
+                {"speaker": speaker, "text": f"对话 {index}"}
+                for index, speaker in enumerate((user["actor"], user["partner"],
+                                                 user["actor"], user["partner"]))]})
+        return {"choices": [{"message": {"content": content}}],
+                "usage": {"total_tokens": 17}}
+
+    monkeypatch.setattr("campus_sim.models._post", fake_post)
+    output = tmp_path / "llm-peer"
+    raw = {"end": 1, "n_students": 2, "driver": "llm", "model_provider": "qwen",
+           "model_id": "qwen-plus", "max_model_calls": 4}
+    asyncio.run(run_plan(output, build(raw)))
+    summary = export(output)
+    assert summary["complete_steps"] == 1
+    assert summary["action_counts"]["model_decision:completed"] == 2
+    assert summary["action_counts"]["peer:completed"] == 2
+    assert summary["network_calls"] == summary["paid_model_calls"] == len(requests) == 4
+    events = [json.loads(line) for line in (output / "events.jsonl").read_text(
+        encoding="utf-8").splitlines()]
+    peers = [event for event in events if event["action"] == "peer"]
+    assert all(event["detail"]["backend"] == "llm" for event in peers)
+    assert all(event["detail"]["usage"]["total_tokens"] == 17 for event in peers)
+    assert all(len(event["detail"]["turns"]) == 4 for event in peers)

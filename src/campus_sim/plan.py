@@ -16,7 +16,7 @@ from society0.kernel.runtime import DriverResult, runtime_plugin
 from . import SOCIETY0_SHA
 from .domain import Config, action_choice, policy_context
 from .mechanism import campus_plugin
-from .models import DECISION_PROMPT_VERSION, ModelClient
+from .models import DECISION_PROMPT_VERSION, DIALOGUE_PROMPT_VERSION, ModelClient
 from .schedule import campus_schedule_plugin
 
 
@@ -69,8 +69,19 @@ def build(raw):
                      "social_memory_count": len(state["social_memory"]),
                  },
                  "policy": policy, "usage": usage})
+        args = {}
+        if action == "peer" and model_client is not None:
+            peer_details = await session.information.read("/peer_dialogue/" + actor)
+            peer_context = json.loads(peer_details.data)
+            partner = peer_context["partner"]
+            turns, dialogue_usage = model_client.peer_dialogue(
+                day=session.moment.time, actor=actor, partner=partner,
+                actor_state=state, partner_state=peer_context["partner_state"],
+                shared_memory=state["memory_context"]["social_memory"])
+            args = {"partner": partner, "turns": turns, "usage": dialogue_usage,
+                    "prompt_version": DIALOGUE_PROMPT_VERSION}
         result = await session.actions.invoke("campus." + action,
-                                               Ref("campus", "student", actor), {})
+                                               Ref("campus", "student", actor), args)
         return DriverResult("completed", {"action": action, "status": result.status,
                                            "reason": (result.value or {}).get("reason")}, "rule")
 

@@ -49,6 +49,10 @@ def summarize(run_dir):
     for event in events:
         key = event["action"] + ":" + event["status"]
         action_counts[key] = action_counts.get(key, 0) + 1
+    recorded_model_calls = sum(
+        e["action"] == "model_decision" or
+        (e["action"] == "peer" and e["status"] == "completed"
+         and e["detail"].get("backend") == "llm") for e in events)
     summary = {"schema_version": SCHEMA_VERSION, "run_id": status["run_id"],
                "status": "failed_diagnostic" if status["failed"] else "complete_steps_only",
                "complete_steps": status["complete"]["step"],
@@ -72,8 +76,8 @@ def summarize(run_dir):
                                            for i in range(5)]},
                "initial_groups": groups, "action_counts": action_counts,
                "served_total": sum(d["served_today"] for d in days),
-               "network_calls": sum(e["action"] == "model_decision" for e in events),
-               "paid_model_calls": sum(e["action"] == "model_decision" for e in events),
+               "network_calls": recorded_model_calls,
+               "paid_model_calls": recorded_model_calls,
                "interpretation": "uncalibrated model-internal scenario result"}
     summary["driver"] = manifest["contract"]["configuration"].get("driver", "rule")
     summary["model_provider"] = manifest["contract"]["configuration"]["plugins"]["campus"].get("model_provider")

@@ -16,6 +16,7 @@ from .domain import (
     unit,
 )
 from .language import language_backend
+from .models import _dialogue
 from .population import make_population, make_staff
 
 SCHEMA = (
@@ -118,10 +119,17 @@ class Campus:
             writer, scope.moment.time, scope.actor, "model_decision", "completed", detail=detail))
         return ActionResult("completed", {"action": detail["action"]})
 
-    def act(self, scope, target, action):
+    def act(self, scope, target, action, args=None):
         day, actor = scope.moment.time, scope.actor
+        args = args or {}
         if target.key != actor:
             return ActionResult("rejected", {"reason": "wrong_actor"})
+        if action == "peer" and self.config.driver == "llm":
+            turns = _dialogue(json.dumps({"turns": args.get("turns")}), actor,
+                              args.get("partner"))
+            if not isinstance(args.get("usage"), dict) or not isinstance(
+                    args.get("prompt_version"), str):
+                raise ValueError("peer dialogue metadata is missing")
         def write(writer):
             rows = writer.query("SELECT body FROM campus_students WHERE id=?", (actor,), max_rows=1)
             if not rows:
@@ -182,6 +190,8 @@ class Campus:
                 state["mood"] = clamp(state["mood"] + 0.015)
             elif action == "peer":
                 partner = peers[int(unit(self.config.seed, "peer_partner", day, actor) * len(peers))][0]
+                if self.config.driver == "llm" and args.get("partner") != partner:
+                    raise ValueError("peer dialogue partner does not match selected partner")
                 state["connection"] = clamp(state["connection"] + 0.045)
                 state["mood"] = clamp(state["mood"] + 0.02)
             elif action == "attend":
@@ -200,12 +210,17 @@ class Campus:
                                (dumps(partner_state), partner))
             detail = ({"wait_days": wait} if action == "accept_support" else
                       {"partner": partner,
-                       "turns": self.language.peer_dialogue(
-                           seed=self.config.seed, day=day, actor=actor, partner=partner,
-                           actor_state=state, partner_state=partner_state,
-                           shared_memory=memory_context(
-                               state.get("social_memory", []), day)),
-                       "backend": self.language.backend}
+                       "turns": turns if self.config.driver == "llm" else
+                           self.language.peer_dialogue(
+                               seed=self.config.seed, day=day, actor=actor, partner=partner,
+                               actor_state=state, partner_state=partner_state,
+                               shared_memory=memory_context(
+                                   state.get("social_memory", []), day)),
+                       "backend": "llm" if self.config.driver == "llm" else self.language.backend,
+                       **({"provider": self.config.model_provider,
+                           "model": self.config.model_id,
+                           "prompt_version": args["prompt_version"],
+                           "usage": args["usage"]} if self.config.driver == "llm" else {})}
                       if action == "peer" else None)
             memory = {"day": day, "action": action, "status": "completed"}
             if action == "peer":
@@ -319,13 +334,33 @@ class CampusInformation:
             return Ref("campus", "course", "main")
         if len(parts) == 2 and parts[0] == "peers":
             return Ref("campus", "peer", parts[1])
+        if len(parts) == 2 and parts[0] == "peer_dialogue":
+            return Ref("campus", "student", parts[1])
         return None
 
     def read(self, scope, path, *, offset=0, size=65536):
         ref = self.ref(path)
         if ref is None:
             raise LookupError(path)
-        if ref.kind == "student":
+        if path.startswith("/peer_dialogue/") and ref.key != scope.actor:
+            raise PermissionError("peer dialogue context belongs to another actor")
+        if path.startswith("/peer_dialogue/"):
+            def partner_context(view):
+                rows = view.query(
+                    "SELECT CASE WHEN a=? THEN b ELSE a END FROM campus_edges "
+                    "WHERE a=? OR b=? ORDER BY 1", (ref.key, ref.key, ref.key))
+                if not rows:
+                    raise ValueError("peer selected without a connected partner")
+                partner = rows[int(unit(self.campus.config.seed, "peer_partner",
+                                        scope.moment.time, ref.key) * len(rows))][0]
+                body = view.query("SELECT body FROM campus_students WHERE id=?", (partner,),
+                                  max_rows=1)[0][0]
+                state = json.loads(body)
+                return {"partner": partner, "partner_state": {
+                    key: state[key] for key in ("stress", "mood", "connection", "recent_events",
+                                             "social_memory")}}
+            data = self.campus.store.read(partner_context)
+        elif ref.kind == "student":
             state = self.campus.student(ref.key)
             data = {key: state[key] for key in ("id", "stress", "mood", "recovery", "connection", "willingness",
                                                   "supported", "pending_day", "outreach_seen", "recent_events",
@@ -373,10 +408,17 @@ def campus_plugin(config):
         information.mount("/service", CampusInformation(campus))
         information.mount("/course", CampusInformation(campus))
         information.mount("/peers", CampusInformation(campus))
+        information.mount("/peer_dialogue", CampusInformation(campus))
         schema = {"type": "object", "properties": {}, "additionalProperties": False}
         for name in ("attend", "rest", "peer", "request", "accept_support"):
-            actions.register(Action("campus." + name, ("campus", "student"), name, schema,
-                lambda scope, target, args, name=name: campus.act(scope, target, name),
+            action_schema = ({"type": "object", "properties": {
+                "partner": {"type": "string"}, "turns": {"type": "array"},
+                "usage": {"type": "object"}, "prompt_version": {"type": "string"}},
+                "required": ["partner", "turns", "usage", "prompt_version"]
+                    if config.driver == "llm" else [],
+                "additionalProperties": False} if name == "peer" else schema)
+            actions.register(Action("campus." + name, ("campus", "student"), name, action_schema,
+                lambda scope, target, args, name=name: campus.act(scope, target, name, args),
                 available=lambda scope, target: target.key == scope.actor),
                 dependencies=("campus_students", "campus_queue", "campus_edges", "campus_service_usage", "campus_follow_up_usage"))
         actions.register(Action("campus.staff_shift", ("campus", "staff"), "staff_shift", schema,
