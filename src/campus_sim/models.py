@@ -100,7 +100,7 @@ def _action(text, allowed=None):
 
 def _dialogue(text, actor, partner):
     if not isinstance(text, str):
-        raise ValueError("model returned no dialogue text")
+        raise TypeError("model returned no dialogue text")
     value = text.strip()
     if value.startswith("```"):
         value = value.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
