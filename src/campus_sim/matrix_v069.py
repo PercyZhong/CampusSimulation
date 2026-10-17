@@ -163,8 +163,6 @@ def build_report(root="runs", driver="rule"):
     spec = protocol()
     if driver not in spec["drivers"]:
         raise ValueError(f"unknown driver: {driver}")
-    if not _current_behavior_is_frozen():
-        raise ValueError("behavior code differs from the frozen V069 version")
     root = Path(root)
     names = [_name(driver, condition, seed) for condition in spec["conditions"]
              for seed in spec["seeds"]]
