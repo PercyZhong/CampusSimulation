@@ -258,6 +258,11 @@ class Campus:
                        "classmate": classmate,
                        "contact_rule": "same_course_prior_attendance_v1"}
                       if action == "attend" else None)
+            if action == "peer":
+                detail["partner_response"] = "accepted"
+                detail["response_basis"] = "partner_edge_and_dialogue_completed_v1"
+                detail["partner_state_before"] = {
+                    key: partner_state[key] for key in ("mood", "connection", "stress")}
             memory = {"day": day, "action": action, "status": "completed"}
             if action == "peer":
                 memory["partner"] = partner

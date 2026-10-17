@@ -24,7 +24,9 @@ def interaction_records(events):
             records.append({**common, "kind": "peer_dialogue",
                             "participants": [event["actor"], detail["partner"]],
                             "venue": None, "response": "dialogue_recorded",
-                            "outcome": "completed"})
+                            "outcome": "completed",
+                            "partner_response": detail.get("partner_response", "not_recorded"),
+                            "response_basis": detail.get("response_basis", "not_recorded")})
         elif action == "peer" and event["status"] == "rejected":
             records.append({**common, "kind": "peer_dialogue",
                             "participants": [event["actor"]], "venue": None,

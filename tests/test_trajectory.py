@@ -237,3 +237,11 @@ def test_interaction_records_separate_dialogue_copresence_and_service():
 def test_interaction_records_preserve_legacy_service_endpoint():
     records = interaction_records([event(1, 1, "s000", "accept_support")])
     assert records[0]["participants"] == ["s000", "service:main"]
+
+
+def test_peer_record_preserves_partner_response_metadata():
+    records = interaction_records([event(1, 1, "s000", "peer", detail={
+        "partner": "s001", "partner_response": "accepted",
+        "response_basis": "partner_edge_and_dialogue_completed_v1"})])
+    assert records[0]["partner_response"] == "accepted"
+    assert records[0]["response_basis"] == "partner_edge_and_dialogue_completed_v1"
