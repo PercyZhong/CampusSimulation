@@ -9,6 +9,7 @@ from campus_sim.domain import (
     action_choice,
     campus_calendar,
     decay_long_term_memory,
+    intervention_effects,
     memory_context,
     next_mood,
     next_stress,
@@ -59,6 +60,27 @@ def test_configuration_and_named_streams():
     assert components["service"] == {"capacity": 3, "open_every": 1}
     context = policy_context(Config(), make_population(Config())[0][0], 1)
     assert set(context["components"]) == {"information_delivery", "access", "service", "follow_up"}
+
+
+def test_targeted_intervention_window_and_validation():
+    config = Config.parse({"condition": "targeted_outreach", "policy_components": {
+        "information_delivery": {"day": 5, "duration_days": 3, "target_group": "lower"},
+        "access": {"barrier_multiplier": 0.5, "start_day": 6,
+                   "duration_days": 2, "target_group": "lower"}}})
+    lower = {"initial_group": "lower", "outreach_seen": True}
+    higher = {"initial_group": "higher", "outreach_seen": False}
+    assert not intervention_effects(config, lower, 4)["information_active"]
+    assert intervention_effects(config, lower, 5)["information_active"]
+    assert intervention_effects(config, lower, 6)["effective_access_barrier"] == 0.11
+    assert not intervention_effects(config, lower, 8)["information_active"]
+    assert intervention_effects(config, lower, 8)["effective_access_barrier"] == 0.22
+    assert not intervention_effects(config, higher, 6)["information_active"]
+    assert intervention_effects(config, higher, 6)["effective_access_barrier"] == 0.22
+    with pytest.raises(ValueError, match="target_group"):
+        Config.parse({"policy_components": {"information_delivery": {
+            "target_group": "current_stress"}}})
+    with pytest.raises(ValueError, match="duration_days"):
+        Config.parse({"policy_components": {"access": {"duration_days": 0}}})
 
 
 def test_synthetic_population_is_shared_across_conditions():

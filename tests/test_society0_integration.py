@@ -61,6 +61,31 @@ def test_two_day_completed_action_and_export(tmp_path):
     assert 0 <= summary["mood_distribution"]["mean"] <= 1
 
 
+def test_targeted_outreach_records_actual_reach_and_window(tmp_path):
+    import asyncio
+
+    from society0.kernel.runner import run_plan
+
+    from campus_sim.analysis import export
+    from campus_sim.plan import build
+
+    raw = json.loads(Path("configs/targeted_outreach.json").read_text(encoding="utf-8"))
+    raw.update(end=8, n_students=10)
+    path = tmp_path / "targeted-outreach"
+    asyncio.run(run_plan(path, build(raw)))
+    summary = export(path)
+    events = [json.loads(line) for line in (path / "events.jsonl").read_text(
+        encoding="utf-8").splitlines()]
+    deliveries = [event for event in events if event["action"] == "outreach_information"]
+    exposures = [event for event in events if event["action"] == "intervention_exposure"]
+    reached = {event["actor"] for event in deliveries}
+    assert {event["day"] for event in deliveries} == {5}
+    assert len(deliveries) == summary["intervention_reached_students"] == len(reached)
+    assert summary["intervention_information_student_days"] == 4 * len(reached)
+    assert {event["day"] for event in exposures} == {5, 6, 7, 8}
+    assert all(event["actor"] in reached for event in exposures)
+
+
 def test_repetition_and_completed_step_resume(tmp_path):
     import asyncio
 

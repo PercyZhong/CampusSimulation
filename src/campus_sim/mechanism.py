@@ -11,6 +11,7 @@ from .domain import (
     campus_calendar,
     clamp,
     decay_long_term_memory,
+    intervention_effects,
     memory_context,
     next_mood,
     next_stress,
@@ -135,16 +136,27 @@ class Campus:
     def prepare(self, day):
         load = academic_event(self.config.seed, day)
         def write(writer):
-            delivery = policy_components(self.config)["information_delivery"]
+            components = policy_components(self.config)
+            delivery = components["information_delivery"]
             if delivery["enabled"] and day == delivery["day"]:
-                # Every synthetic actor sees general service information; no private-state targeting.
+                # Assignment uses only the fixed initial cohort, never current private state.
                 for sid, body in list(writer.iter_query("SELECT id,body FROM campus_students ORDER BY id")):
                     state = json.loads(body)
+                    target = delivery["target_group"]
+                    if target != "all" and state["initial_group"] != target:
+                        continue
                     state["outreach_seen"] = True
                     writer.execute("UPDATE campus_students SET body=? WHERE id=?", (dumps(state), sid))
-                    self.event(writer, day, sid, "outreach_information", "completed")
+                    self.event(writer, day, sid, "outreach_information", "completed",
+                               detail={"target_group": target, "start_day": day,
+                                       "duration_days": delivery["duration_days"]})
             for sid, body in writer.iter_query("SELECT id,body FROM campus_students ORDER BY id"):
                 state = json.loads(body)
+                effects = intervention_effects(self.config, state, day)
+                if effects["information_active"] or (effects["access_active"] and
+                        components["access"]["barrier_multiplier"] < 1):
+                    self.event(writer, day, sid, "intervention_exposure", "completed",
+                               detail=effects)
                 context = scenario_context(self.config.seed, day, state)
                 for name in ("exam_period", "low_social_signal", "help_waiting",
                              "post_support_recovery"):
@@ -733,7 +745,8 @@ class CampusInformation:
             }
         elif ref.kind == "service":
             components = policy_components(self.campus.config)
-            barrier = self.campus.config.access_barrier * components["access"]["barrier_multiplier"]
+            barrier = intervention_effects(self.campus.config, self.campus.student(scope.actor),
+                                           scope.moment.time)["effective_access_barrier"]
             data = {"open": scope.moment.time % components["service"]["open_every"] == 0,
                     "capacity": components["service"]["capacity"],
                     "access_barrier": barrier,

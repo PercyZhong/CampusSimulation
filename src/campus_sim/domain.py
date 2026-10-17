@@ -54,7 +54,8 @@ class Config:
                 )
         elif value.model_provider is not None or value.model_id is not None or value.max_model_calls:
             raise ValueError("model settings require llm driver")
-        if value.condition not in {"baseline", "outreach", "easier_access"}:
+        if value.condition not in {"baseline", "outreach", "easier_access",
+                                   "targeted_outreach"}:
             raise ValueError("unknown condition")
         if type(value.access_barrier) not in (int, float) or not 0 <= value.access_barrier <= 1:
             raise ValueError("access_barrier must be in [0,1]")
@@ -73,6 +74,24 @@ class Config:
                 type(access["barrier_multiplier"]) not in (int, float)
                 or not 0 <= access["barrier_multiplier"] <= 1):
             raise ValueError("barrier_multiplier must be in [0,1]")
+        for name in ("information_delivery", "access"):
+            component = value.policy_components.get(name, {})
+            if "target_group" in component and (
+                    type(component["target_group"]) is not str
+                    or component["target_group"] not in {"all", "lower", "higher"}):
+                raise ValueError(f"{name} target_group must be all, lower or higher")
+            if ("duration_days" in component and component["duration_days"] is not None
+                    and (type(component["duration_days"]) is not int
+                         or component["duration_days"] < 1)):
+                raise ValueError(f"{name} duration_days must be a positive integer")
+        delivery = value.policy_components.get("information_delivery", {})
+        if "day" in delivery and (type(delivery["day"]) is not int or delivery["day"] < 1):
+            raise ValueError("information_delivery day must be a positive integer")
+        if "enabled" in delivery and type(delivery["enabled"]) is not bool:
+            raise TypeError("information_delivery enabled must be boolean")
+        if "start_day" in access and (type(access["start_day"]) is not int
+                                      or access["start_day"] < 1):
+            raise ValueError("access start_day must be a positive integer")
         service = value.policy_components.get("service", {})
         for key in ("capacity", "open_every"):
             if key in service and (type(service[key]) is not int or service[key] < 1):
@@ -91,9 +110,13 @@ def policy_components(config):
     """Return explicit, auditable policy components with condition defaults."""
     defaults = {
         "information_delivery": {
-            "enabled": config.condition == "outreach", "day": config.outreach_day},
+            "enabled": config.condition in {"outreach", "targeted_outreach"},
+            "day": config.outreach_day,
+            "target_group": "lower" if config.condition == "targeted_outreach" else "all",
+            "duration_days": None},
         "access": {
-            "barrier_multiplier": 0.45 if config.condition == "easier_access" else 1.0},
+            "barrier_multiplier": 0.45 if config.condition == "easier_access" else 1.0,
+            "start_day": 1, "duration_days": None, "target_group": "all"},
         "service": {"capacity": config.capacity, "open_every": config.open_every},
         "follow_up": {"enabled": False, "days_after_support": 3},
     }
@@ -102,17 +125,40 @@ def policy_components(config):
     return defaults
 
 
+def intervention_effects(config, student, day):
+    """Compute actual exposure from fixed cohort and explicit time windows."""
+    components = policy_components(config)
+    delivery = components["information_delivery"]
+    access = components["access"]
+
+    def eligible(part):
+        return (part["target_group"] == "all"
+                or student.get("initial_group") == part["target_group"])
+    information_active = (delivery["enabled"] and student.get("outreach_seen", False)
+                          and eligible(delivery) and day >= delivery["day"]
+                          and (delivery["duration_days"] is None
+                               or day < delivery["day"] + delivery["duration_days"]))
+    access_active = (access["barrier_multiplier"] < 1 and eligible(access)
+                     and day >= access["start_day"]
+                     and (access["duration_days"] is None
+                          or day < access["start_day"] + access["duration_days"]))
+    multiplier = access["barrier_multiplier"] if access_active else 1.0
+    return {"information_active": information_active, "access_active": access_active,
+            "effective_access_barrier": round(config.access_barrier * multiplier, 6)}
+
+
 def policy_context(config, student, day):
     """Explain the active intervention without exposing hidden student state."""
     components = policy_components(config)
-    informed = components["information_delivery"]["enabled"] and student["outreach_seen"]
+    effects = intervention_effects(config, student, day)
+    informed = effects["information_active"]
     if student["pending_day"] is not None or student["supported"]:
         actions = ["attend", "rest", "peer"]
         if student["pending_day"] is not None:
             actions.append("accept_support")
         opportunity = False
     else:
-        barrier = config.access_barrier * components["access"]["barrier_multiplier"]
+        barrier = effects["effective_access_barrier"]
         propensity = 0.14 + 0.48 * student["willingness"] + 0.14 * (1 - student["connection"])
         if informed:
             propensity += 0.16
@@ -122,16 +168,17 @@ def policy_context(config, student, day):
         actions = ["attend", "rest", "peer"]
         if opportunity:
             actions.append("request")
-    barrier = config.access_barrier * components["access"]["barrier_multiplier"]
+    barrier = effects["effective_access_barrier"]
     common = {"request_available_today": "request" in actions,
               "available_actions": actions,
-              "effective_access_barrier": round(barrier, 6)}
+              "effective_access_barrier": barrier,
+              "intervention_effects": effects}
     if informed:
         return {**common, "name": "outreach",
                 "intervention": "已收到主动关怀提供的一般支持服务信息。",
                 "guidance": "收到信息后，可根据需要考虑校园支持服务。",
                 "information_received": True, "components": components}
-    if config.condition == "easier_access":
+    if effects["access_active"] and components["access"]["barrier_multiplier"] < 1:
         return {**common, "name": "easier_access", "intervention": "咨询服务更容易获得；求助门槛降低。",
                 "guidance": "当支持有帮助且门槛较低时，可以提出请求；也可以选择其他行动。",
                 "information_received": False, "components": components}
@@ -303,9 +350,10 @@ def action_choice(student, day, config):
     propensity += 0.08 * (student.get("help_seeking_belief", 0.5) - 0.5)
     if scenario["exam_period"]:
         propensity += 0.025
-    if config.condition == "outreach" and student["outreach_seen"]:
+    effects = intervention_effects(config, student, day)
+    if effects["information_active"]:
         propensity += 0.16
-    barrier = config.access_barrier * (0.45 if config.condition == "easier_access" else 1)
+    barrier = effects["effective_access_barrier"]
     if unit(config.seed, "choice", day, sid) < clamp(propensity - barrier):
         return "request"
     draw = unit(config.seed, "other_choice", day, sid)

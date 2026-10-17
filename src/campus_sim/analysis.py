@@ -374,6 +374,10 @@ def summarize(run_dir):
     for event in events:
         key = event["action"] + ":" + event["status"]
         action_counts[key] = action_counts.get(key, 0) + 1
+    deliveries = [event for event in events if event["action"] == "outreach_information"
+                  and event["status"] == "completed"]
+    exposures = [event for event in events if event["action"] == "intervention_exposure"
+                 and event["status"] == "completed"]
     decisions = [e for e in events if e["action"] == "model_decision" and e["status"] == "completed"]
     selection_counts = {name: sum(e["detail"].get("action") == name for e in decisions)
                         for name in ACTION_NAMES}
@@ -490,6 +494,16 @@ def summarize(run_dir):
                     "bins_0_to_1_by_0_2": [sum(min(4, int(s["stress"] * 5)) == i for s in students)
                                            for i in range(5)]},
                "initial_groups": groups, "action_counts": action_counts,
+               "intervention_delivery_count": len(deliveries),
+               "intervention_reached_students": len({event["actor"] for event in deliveries}),
+               "intervention_exposure_student_days": len(exposures),
+               "intervention_information_student_days": sum(
+                   event["detail"].get("information_active", False) for event in exposures),
+               "intervention_access_student_days": sum(
+                   event["detail"].get("access_active", False)
+                   and event["detail"].get("effective_access_barrier") <
+                   manifest["contract"]["configuration"]["plugins"]["campus"]["access_barrier"]
+                   for event in exposures),
                "model_decision_count": len(decisions),
                "action_selection_counts": selection_counts,
                "action_selection_rates": selection_rates,
