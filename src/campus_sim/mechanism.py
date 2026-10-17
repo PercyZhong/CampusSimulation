@@ -36,6 +36,8 @@ SCHEMA = (
      "PRIMARY KEY(day,actor,slot))"),
     ("CREATE TABLE campus_peer_invitations(day INTEGER NOT NULL,actor TEXT NOT NULL,"
      "partner TEXT NOT NULL,response TEXT NOT NULL,PRIMARY KEY(day,actor))"),
+    ("CREATE TABLE campus_peer_response_queue(day INTEGER NOT NULL,actor TEXT NOT NULL,"
+     "partner TEXT NOT NULL,response TEXT NOT NULL,PRIMARY KEY(day,actor))"),
     ("CREATE TABLE campus_relationships(a TEXT NOT NULL,b TEXT NOT NULL,strength REAL NOT NULL,"
      "first_day INTEGER,last_day INTEGER,contacts INTEGER NOT NULL,relationship_type TEXT NOT NULL,"
      "PRIMARY KEY(a,b))"),
@@ -146,6 +148,25 @@ class Campus:
                     if context[name]:
                         self.event(writer, day, sid, "scenario_trigger", "completed",
                                    detail={"name": name, "context": context})
+            for actor, partner in writer.iter_query(
+                    "SELECT actor,partner FROM campus_peer_invitations WHERE day=? AND response='timeout'",
+                    (day - 1,)):
+                if writer.query("SELECT 1 FROM campus_peer_response_queue "
+                                "WHERE day=? AND actor=?", (day, actor), max_rows=1):
+                    continue
+                response = "accepted" if unit(self.config.seed, "peer_delayed_response",
+                                               day, actor, partner) < 0.72 else "rejected"
+                writer.execute("INSERT INTO campus_peer_response_queue VALUES(?,?,?,?)",
+                               (day, actor, partner, response))
+                self.event(writer, day, partner, "peer_response", response,
+                           detail={"inviter": actor, "partner": partner,
+                                   "delayed": True, "response_day": day,
+                                   "basis": "delayed_timeout_followup_v1"})
+                if response == "accepted":
+                    self.event(writer, day, partner, "peer_callback", "completed",
+                               detail={"inviter": actor, "partner": partner,
+                                       "source_day": day - 1,
+                                       "relationship_type": relationship_type(actor, partner)})
         self.store.transaction(write)
         return load
 
@@ -167,14 +188,38 @@ class Campus:
                 (day, actor), max_rows=1)
             if existing:
                 partner, response = existing[0]
+                if response == "accepted" and writer.query(
+                        "SELECT 1 FROM campus_events WHERE day=? AND actor=? "
+                        "AND action='peer' AND status='completed'", (day, actor), max_rows=1):
+                    return {"status": "rejected", "partner": partner,
+                            "response": response, "reason": "already_contacted_today"}
                 return {"status": "completed" if response == "accepted" else "rejected",
                         "partner": partner, "response": response}
+            delayed = writer.query(
+                "SELECT partner,response FROM campus_peer_response_queue "
+                "WHERE day=? AND actor=? AND response='accepted'",
+                (day, actor), max_rows=1)
+            if delayed:
+                partner, response = delayed[0]
+                writer.execute("INSERT INTO campus_peer_invitations VALUES(?,?,?,?)",
+                               (day, actor, partner, response))
+                return {"status": "completed", "partner": partner,
+                        "response": response, "delayed": True}
             peers = writer.query(
                 "SELECT CASE WHEN a=? THEN b ELSE a END FROM campus_edges "
                 "WHERE a=? OR b=? ORDER BY 1", (actor, actor, actor))
             if not peers:
                 self.event(writer, day, actor, "peer", "rejected", "no_peer_edge")
                 return {"status": "rejected", "reason": "no_peer_edge"}
+            recent = writer.query(
+                "SELECT partner,response FROM campus_peer_invitations "
+                "WHERE actor=? AND day>=? AND day<? AND response IN ('rejected','timeout')",
+                (actor, day - 2, day))
+            excluded = {partner for partner, _ in recent}
+            peers = [row for row in peers if row[0] not in excluded]
+            if not peers:
+                self.event(writer, day, actor, "peer", "rejected", "invitation_cooldown")
+                return {"status": "rejected", "reason": "invitation_cooldown"}
             partner = peers[int(unit(self.config.seed, "peer_partner", day, actor)
                                 * len(peers))][0]
             rows = writer.query("SELECT body FROM campus_students WHERE id=?", (partner,),
@@ -193,7 +238,9 @@ class Campus:
                                "relationship_type": relation})
             if response != "accepted":
                 self.event(writer, day, actor, "peer", "rejected", response,
-                           detail={"partner": partner, "partner_response": response})
+                           detail={"partner": partner, "partner_response": response,
+                                   "response_reason": ("partner_unavailable" if response == "rejected"
+                                                       else "no_reply_before_deadline")})
             return {"status": "completed" if response == "accepted" else "rejected",
                     "partner": partner, "response": response,
                     "reason": response if response != "accepted" else None}
@@ -380,6 +427,10 @@ class Campus:
                       if action == "attend" else None)
             if action == "peer":
                 detail["partner_response"] = "accepted"
+                detail["delayed_response"] = bool(writer.query(
+                    "SELECT 1 FROM campus_peer_response_queue "
+                    "WHERE day=? AND actor=? AND partner=? AND response='accepted'",
+                    (day, actor, partner), max_rows=1))
                 detail["response_basis"] = "partner_edge_and_dialogue_completed_v1"
                 detail["partner_state_before"] = {
                     key: partner_state[key] for key in ("mood", "connection", "stress")}
@@ -622,13 +673,13 @@ class CampusInformation:
             raise PermissionError("peer dialogue context belongs to another actor")
         if path.startswith("/peer_dialogue/"):
             def partner_context(view):
-                rows = view.query(
-                    "SELECT CASE WHEN a=? THEN b ELSE a END FROM campus_edges "
-                    "WHERE a=? OR b=? ORDER BY 1", (ref.key, ref.key, ref.key))
-                if not rows:
-                    raise ValueError("peer selected without a connected partner")
-                partner = rows[int(unit(self.campus.config.seed, "peer_partner",
-                                        scope.moment.time, ref.key) * len(rows))][0]
+                invitation = view.query(
+                    "SELECT partner FROM campus_peer_invitations "
+                    "WHERE day=? AND actor=? AND response='accepted'",
+                    (scope.moment.time, ref.key), max_rows=1)
+                if not invitation:
+                    raise ValueError("peer dialogue requires an accepted invitation")
+                partner = invitation[0][0]
                 body = view.query("SELECT body FROM campus_students WHERE id=?", (partner,),
                                   max_rows=1)[0][0]
                 state = json.loads(body)
@@ -714,7 +765,11 @@ def campus_plugin(config):
             actions.register(Action("campus." + name, ("campus", "student"), name, action_schema,
                 lambda scope, target, args, name=name: campus.act(scope, target, name, args),
                 available=lambda scope, target: target.key == scope.actor),
-                dependencies=("campus_students", "campus_queue", "campus_edges", "campus_relationships", "campus_peer_invitations", "campus_venue_bookings", "campus_service_usage", "campus_follow_up_usage", "campus_interactions"))
+                dependencies=("campus_students", "campus_queue", "campus_edges",
+                              "campus_relationships", "campus_peer_invitations",
+                              "campus_peer_response_queue", "campus_venue_bookings",
+                              "campus_service_usage", "campus_follow_up_usage",
+                              "campus_interactions"))
         actions.register(Action("campus.staff_shift", ("campus", "staff"), "staff_shift", schema,
             lambda scope, target, args: campus.staff_shift(scope, target),
             available=lambda scope, target: target.key == scope.actor),
@@ -737,6 +792,7 @@ def campus_plugin(config):
             lambda scope, target, args: campus.peer_invite(scope, target),
             available=lambda scope, target: target.key == scope.actor),
             dependencies=("campus_students", "campus_edges", "campus_peer_invitations",
+                          "campus_peer_response_queue",
                           "campus_events"))
         context.provide("campus", campus)
     return Plugin("campus", ("storage", "interaction"), install, schema=SCHEMA, initialize=initialize)

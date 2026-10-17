@@ -40,7 +40,12 @@ def interaction_records(events):
             records.append({**common, "kind": "peer_response",
                             "participants": [detail.get("inviter"), event["actor"]],
                             "venue": None, "response": event["status"],
-                            "outcome": "responded"})
+                            "outcome": "responded", "delayed": detail.get("delayed", False)})
+        elif action == "peer_callback" and event["status"] == "completed":
+            records.append({**common, "kind": "peer_callback",
+                            "participants": [event["actor"], detail["inviter"]],
+                            "venue": None, "response": "accepted",
+                            "outcome": "callback", "source_day": detail["source_day"]})
         elif action == "attend" and event["status"] == "completed":
             context = detail.get("context") or {}
             records.append({**common, "kind": "class_attendance",
@@ -378,6 +383,10 @@ def summarize(run_dir):
     peer_invitations = [e for e in events if e["action"] == "peer_invitation"
                         and e["status"] == "completed"]
     peer_responses = [e for e in events if e["action"] == "peer_response"]
+    delayed_peer_responses = [e for e in peer_responses if e["detail"].get("delayed")]
+    callbacks = [e for e in events if e["action"] == "peer_callback"
+                 and e["status"] == "completed"]
+    delayed_dialogues = sum(bool(e["detail"].get("delayed_response")) for e in peer_events)
     accepted_responses = sum(e["status"] == "accepted" for e in peer_responses)
     peer_llm = [e for e in peer_events if e["detail"].get("backend") == "llm"]
     peer_valid = [e for e in peer_llm if len(e["detail"].get("turns", [])) == 4]
@@ -488,6 +497,9 @@ def summarize(run_dir):
                                              if peer_llm else None),
                "peer_invitation_count": len(peer_invitations),
                "peer_response_counts": dict(Counter(e["status"] for e in peer_responses)),
+               "peer_delayed_response_count": len(delayed_peer_responses),
+               "peer_callback_count": len(callbacks),
+               "peer_delayed_dialogue_count": delayed_dialogues,
                "peer_acceptance_rate": (accepted_responses / len(peer_responses)
                                         if peer_responses else None),
                "peer_dialogue_completion_rate": (len(peer_events) / len(peer_invitations)

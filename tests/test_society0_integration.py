@@ -328,6 +328,53 @@ def test_residence_presence_only_lists_prior_roommates(tmp_path):
     asyncio.run(exercise())
 
 
+def test_delayed_peer_callback_and_invitation_cooldown(monkeypatch, tmp_path):
+    import asyncio
+
+    from society0.kernel.composition import compose
+    from society0.kernel.interaction import InteractionScope, Moment, Ref
+
+    from campus_sim.plan import build
+
+    raw = json.loads(Path("configs/baseline.json").read_text(encoding="utf-8"))
+    raw.update(end=3, n_students=2)
+    monkeypatch.setattr("campus_sim.mechanism.peer_response", lambda *args: "timeout")
+    original_unit = __import__("campus_sim.mechanism", fromlist=["unit"]).unit
+
+    def draws(seed, stream, *parts):
+        if stream == "peer_delayed_response":
+            return 0.1
+        return original_unit(seed, stream, *parts)
+
+    monkeypatch.setattr("campus_sim.mechanism.unit", draws)
+
+    async def exercise():
+        async with compose(tmp_path / "delayed-peer", build(raw).plugins) as host:
+            campus = host.service("campus", "campus")
+            actions = host.service("interaction", "actions")
+            campus.prepare(1)
+            with InteractionScope("s000", Moment(1, "decide")) as scope:
+                first = await actions.bound(scope).invoke(
+                    "campus.peer_invite", Ref("campus", "student", "s000"), {})
+                assert first.status == "rejected" and first.value["response"] == "timeout"
+            campus.prepare(2)
+            with InteractionScope("s000", Moment(2, "decide")) as scope:
+                callback = await actions.bound(scope).invoke(
+                    "campus.peer_invite", Ref("campus", "student", "s000"), {})
+                assert callback.status == "completed" and callback.value["delayed"]
+            store = host.service("storage", "store")
+            events = store.read(lambda view: list(view.iter_query(
+                "SELECT day,action,status,detail FROM campus_events "
+                "WHERE action IN ('peer_response','peer_callback') ORDER BY ordinal")))
+            assert [(day, action, status) for day, action, status, _ in events] == [
+                (1, "peer_response", "timeout"),
+                (2, "peer_response", "accepted"),
+                (2, "peer_callback", "completed")]
+            assert json.loads(events[-1][3])["source_day"] == 1
+
+    asyncio.run(exercise())
+
+
 def test_daily_metrics_expose_emotional_feedback_components(tmp_path):
     import asyncio
     import csv

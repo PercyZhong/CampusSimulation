@@ -83,6 +83,13 @@
 - 首次接受形成关系，重复接受增强关系；连续未接触的关系在每日结算中按天衰减，并记录 `relationship_decay_updates`。
 - 关系边现在按稳定校园上下文分类为 `roommate`、`club_member`、`study_partner` 或 `acquaintance`；分类写入 `campus_relationships.relationship_type`，并附在邀请、回应和完成对话事件中。
 - 不同关系类型使用不同的初始强度、重复接触增量、回应可用性加成和衰减速率；汇总新增 `relationship_type_counts`。
+
+## 延迟回应与回访
+
+- 当日 `timeout` 的邀请在次日准备阶段由独立随机流结算为 `accepted` 或 `rejected`，写入 `peer_response`；接受时另记 `peer_callback`。这只是伙伴回访事实，不会自动生成对话。
+- 发起者次日若选择 `peer`，已接受的回访会绑定原伙伴并继续生成四轮对话；LLM 上下文从已接受邀请读取伙伴，避免重选。
+- 近期两天被拒绝或尚未回应的伙伴进入邀请冷却；没有其他候选时记录 `invitation_cooldown`。拒绝事件记录 `response_reason`。
+- 汇总新增 `peer_delayed_response_count`、`peer_callback_count` 与 `peer_delayed_dialogue_count`。旧运行缺少这些事件时计数为零。
 - 汇总增加首次形成次数、重复接触次数和平均关系强度，区分候选关系与实际互动关系。
 
 ## 第十二步：学生社团共同在场
