@@ -81,6 +81,8 @@
 ## 第十五步：关系形成与衰减
 - 潜在同伴边保留在 `campus_edges`；实际接受的 `peer` 会在 `campus_relationships` 中记录关系强度、首次接触日、最近接触日和接触次数。
 - 首次接受形成关系，重复接受增强关系；连续未接触的关系在每日结算中按天衰减，并记录 `relationship_decay_updates`。
+- 关系边现在按稳定校园上下文分类为 `roommate`、`club_member`、`study_partner` 或 `acquaintance`；分类写入 `campus_relationships.relationship_type`，并附在邀请、回应和完成对话事件中。
+- 不同关系类型使用不同的初始强度、重复接触增量、回应可用性加成和衰减速率；汇总新增 `relationship_type_counts`。
 - 汇总增加首次形成次数、重复接触次数和平均关系强度，区分候选关系与实际互动关系。
 
 ## 第十二步：学生社团共同在场
