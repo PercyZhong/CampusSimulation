@@ -131,6 +131,14 @@ class Campus:
                     state["outreach_seen"] = True
                     writer.execute("UPDATE campus_students SET body=? WHERE id=?", (dumps(state), sid))
                     self.event(writer, day, sid, "outreach_information", "completed")
+            for sid, body in writer.iter_query("SELECT id,body FROM campus_students ORDER BY id"):
+                state = json.loads(body)
+                context = scenario_context(self.config.seed, day, state)
+                for name in ("exam_period", "low_social_signal", "help_waiting",
+                             "post_support_recovery"):
+                    if context[name]:
+                        self.event(writer, day, sid, "scenario_trigger", "completed",
+                                   detail={"name": name, "context": context})
         self.store.transaction(write)
         return load
 
