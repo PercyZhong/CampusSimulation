@@ -61,9 +61,11 @@ def test_interaction_network_tracks_new_edges_and_repeated_contacts():
     result = interaction_network_metrics(events)
     assert result["interaction_network_unique_edges"] == 3
     assert result["interaction_network_edges_by_source"] == {
-        "peer": 1, "class_contact": 1, "study_group_copresence": 3}
+        "peer": 1, "class_contact": 1, "study_group_copresence": 3,
+        "residence_copresence": 0}
     assert result["interaction_network_contacts_by_source"] == {
-        "peer": 1, "class_contact": 1, "study_group_copresence": 3}
+        "peer": 1, "class_contact": 1, "study_group_copresence": 3,
+        "residence_copresence": 0}
     assert result["interaction_network_daily_change"] == [
         {"day": 1, "contacts": 4, "new_edges": 3, "repeat_contacts": 1},
         {"day": 2, "contacts": 1, "new_edges": 0, "repeat_contacts": 1}]
