@@ -177,6 +177,9 @@ def test_peer_action_records_partner_dialogue_and_updates_partner(tmp_path):
             assert student["recent_events"][-1]["action"] == "peer"
             assert student["social_memory"][-1]["partner"] == detail["partner"]
             assert partner["social_memory"][-1]["partner"] == "s000"
+            assert student["long_term_memory"]["action_counts"]["peer"] == 1
+            assert student["long_term_memory"]["partners"][detail["partner"]]["contacts"] == 1
+            assert partner["long_term_memory"]["partners"]["s000"]["contacts"] == 1
 
     asyncio.run(exercise())
 

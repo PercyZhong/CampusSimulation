@@ -8,6 +8,7 @@ from campus_sim.domain import (
     academic_event,
     action_choice,
     campus_calendar,
+    decay_long_term_memory,
     memory_context,
     next_mood,
     next_stress,
@@ -16,6 +17,7 @@ from campus_sim.domain import (
     policy_context,
     residence_context,
     unit,
+    update_long_term_memory,
 )
 
 
@@ -118,6 +120,42 @@ def test_memory_context_applies_recency_weights_without_mutating_events():
     weighted = memory_context(events, day=5)
     assert [item["recency_weight"] for item in weighted] == [0.2, 0.5]
     assert events == [{"day": 1, "action": "rest"}, {"day": 4, "action": "peer"}]
+
+
+def test_long_term_partner_memory_decays_and_keeps_factual_counts():
+    state = {"long_term_memory": {"action_counts": {}, "partners": {}}}
+    update_long_term_memory(state, {"day": 1, "action": "peer_invitation",
+                                    "partner": "s001", "response": "accepted"})
+    update_long_term_memory(state, {"day": 1, "action": "peer", "partner": "s001"})
+    trace = state["long_term_memory"]["partners"]["s001"]
+    assert trace["contacts"] == 1
+    assert trace["last_response"] == "accepted"
+    assert state["long_term_memory"]["action_counts"] == {
+        "peer_invitation": 1, "peer": 1}
+    before = trace["salience"]
+    decay_long_term_memory(state, 2)
+    assert state["long_term_memory"]["partners"]["s001"]["salience"] < before
+    decay_long_term_memory(state, 50)
+    assert state["long_term_memory"]["partners"] == {}
+    assert state["long_term_memory"]["action_counts"]["peer"] == 1
+
+
+def test_partner_memory_changes_rule_peer_choice(monkeypatch):
+    base = Config()
+    student = make_population(base)[0][0]
+    student["willingness"] = 0
+    student["connection"] = 1
+    student["belonging"] = 0.5
+    student["social_avoidance"] = 0.5
+
+    def draw(seed, stream, *parts):
+        return 1 if stream == "choice" else 0.25
+
+    monkeypatch.setattr("campus_sim.domain.unit", draw)
+    assert action_choice(student, 1, base) == "rest"
+    student["long_term_memory"]["partners"]["s001"] = {
+        "contacts": 2, "last_day": 1, "salience": 0.5, "last_response": "accepted"}
+    assert action_choice(student, 1, base) == "peer"
 
 
 def test_offline_language_is_reproducible():

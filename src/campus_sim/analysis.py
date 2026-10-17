@@ -405,6 +405,9 @@ def summarize(run_dir):
             relationships["formed" if rel.get("contacts") == 1 else "repeated"] += 1
             relationship_types[rel.get("relationship_type", "unknown")] += 1
             relationship_strengths.append(rel.get("strength", 0))
+    memory_actions = Counter()
+    for student in students:
+        memory_actions.update(student.get("long_term_memory", {}).get("action_counts", {}))
     peer_partners = {e["detail"].get("partner") for e in peer_events}
     classmate_events = [e for e in events if e["action"] == "attend"
                         and e["status"] == "completed" and e["detail"].get("classmate")]
@@ -517,6 +520,12 @@ def summarize(run_dir):
                          if all(key in s for s in students) else None)
                    for key in ("academic_engagement", "self_efficacy", "belonging",
                                "help_seeking_belief", "social_avoidance")},
+               "long_term_memory": {
+                   "students_with_partner_traces": sum(bool(s.get("long_term_memory", {}).get(
+                       "partners")) for s in students),
+                   "retained_partner_traces": sum(len(s.get("long_term_memory", {}).get(
+                       "partners", {})) for s in students),
+                   "action_counts": dict(memory_actions)},
                **trajectories,
                "support_window_metrics": support_windows,
                "support_recovery_metrics": recovery,

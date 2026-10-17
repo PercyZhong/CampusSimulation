@@ -160,6 +160,43 @@ def memory_context(events, day, limit=5):
     return weighted
 
 
+def update_long_term_memory(state, event):
+    """Keep bounded factual counts and a decaying partner trace."""
+    memory = state.setdefault("long_term_memory", {"action_counts": {}, "partners": {}})
+    action = event.get("action")
+    if action:
+        counts = memory["action_counts"]
+        counts[action] = counts.get(action, 0) + 1
+    partner = event.get("partner")
+    if partner:
+        partners = memory["partners"]
+        trace = partners.setdefault(partner, {"contacts": 0, "last_day": event["day"],
+                                               "salience": 0.0})
+        elapsed = max(0, event["day"] - trace.get("salience_day", trace["last_day"]))
+        response = event.get("response")
+        trace["salience"] = clamp(trace["salience"] * 0.9**elapsed
+                                  + (0.3 if action == "peer" else 0.15))
+        if action == "peer":
+            trace["contacts"] += 1
+        if response:
+            trace["last_response"] = response
+        trace["last_day"] = event["day"]
+        trace["salience_day"] = event["day"]
+    return memory
+
+
+def decay_long_term_memory(state, day):
+    """Decay recall strength once per day while retaining auditable counts."""
+    memory = state.setdefault("long_term_memory", {"action_counts": {}, "partners": {}})
+    for trace in memory["partners"].values():
+        elapsed = max(0, day - trace.get("salience_day", trace["last_day"]))
+        trace["salience"] = clamp(trace["salience"] * 0.9**elapsed)
+        trace["salience_day"] = day
+    memory["partners"] = {partner: trace for partner, trace in memory["partners"].items()
+                          if trace["salience"] >= 0.05}
+    return memory
+
+
 def academic_event(seed, day):
     return round(0.04 + 0.12 * unit(seed, "academic_event", day), 6)
 
@@ -275,6 +312,11 @@ def action_choice(student, day, config):
     peer_limit = clamp(0.24 + 0.08 * (student.get("belonging", 0.5) - 0.5)
                        - 0.1 * (student.get("social_avoidance", 0.5) - 0.5)
                        + (0.03 if scenario["low_social_signal"] else 0))
+    traces = student.get("long_term_memory", {}).get("partners", {}).values()
+    memory_signal = sum(
+        trace["salience"] * (1 if trace.get("last_response") == "accepted" else -1)
+        for trace in traces if trace.get("last_response") in {"accepted", "rejected", "timeout"})
+    peer_limit = clamp(peer_limit + 0.04 * max(-1.0, min(1.0, memory_signal)))
     rest_limit = clamp(peer_limit + 0.22 + (0.04 if scenario["exam_period"] else 0))
     other = "peer" if draw < peer_limit else "rest" if draw < rest_limit else "attend"
     if other == "attend" and not campus_calendar(config.seed, day, sid)["course"]["open"]:

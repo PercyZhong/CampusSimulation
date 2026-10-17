@@ -10,6 +10,7 @@ from .domain import (
     academic_event,
     campus_calendar,
     clamp,
+    decay_long_term_memory,
     memory_context,
     next_mood,
     next_stress,
@@ -20,6 +21,7 @@ from .domain import (
     residence_context,
     scenario_context,
     unit,
+    update_long_term_memory,
 )
 from .language import language_backend
 from .models import _dialogue
@@ -73,6 +75,7 @@ class Campus:
     def remember(state, event):
         state.setdefault("recent_events", []).append(event)
         state["recent_events"] = state["recent_events"][-5:]
+        update_long_term_memory(state, event)
 
     @staticmethod
     def remember_social(state, event):
@@ -162,6 +165,14 @@ class Campus:
                            detail={"inviter": actor, "partner": partner,
                                    "delayed": True, "response_day": day,
                                    "basis": "delayed_timeout_followup_v1"})
+                for sid, other in ((actor, partner), (partner, actor)):
+                    body = writer.query("SELECT body FROM campus_students WHERE id=?",
+                                        (sid,), max_rows=1)[0][0]
+                    state = json.loads(body)
+                    update_long_term_memory(state, {"day": day, "action": "peer_response",
+                                                    "partner": other, "response": response})
+                    writer.execute("UPDATE campus_students SET body=? WHERE id=?",
+                                   (dumps(state), sid))
                 if response == "accepted":
                     self.event(writer, day, partner, "peer_callback", "completed",
                                detail={"inviter": actor, "partner": partner,
@@ -203,6 +214,10 @@ class Campus:
                 partner, response = delayed[0]
                 writer.execute("INSERT INTO campus_peer_invitations VALUES(?,?,?,?)",
                                (day, actor, partner, response))
+                self.event(writer, day, actor, "peer_invitation", "completed",
+                           detail={"partner": partner, "response": response,
+                                   "delayed": True, "basis": "delayed_timeout_followup_v1",
+                                   "relationship_type": relationship_type(actor, partner)})
                 return {"status": "completed", "partner": partner,
                         "response": response, "delayed": True}
             peers = writer.query(
@@ -227,6 +242,17 @@ class Campus:
             partner_state = json.loads(rows[0][0])
             relation = relationship_type(actor, partner)
             response = peer_response(self.config.seed, day, actor, partner, partner_state, relation)
+            actor_state = json.loads(writer.query(
+                "SELECT body FROM campus_students WHERE id=?", (actor,), max_rows=1)[0][0])
+            update_long_term_memory(actor_state,
+                {"day": day, "action": "peer_invitation", "partner": partner,
+                 "response": response})
+            update_long_term_memory(partner_state,
+                                    {"day": day, "action": "peer_response", "partner": actor,
+                                     "response": response})
+            writer.execute("UPDATE campus_students SET body=? WHERE id=?", (dumps(actor_state), actor))
+            writer.execute("UPDATE campus_students SET body=? WHERE id=?",
+                           (dumps(partner_state), partner))
             writer.execute("INSERT INTO campus_peer_invitations VALUES(?,?,?,?)",
                            (day, actor, partner, response))
             basis = "partner_state_availability_v2"
@@ -442,6 +468,8 @@ class Campus:
                 memory["partner"] = partner
                 self.remember_social(state, {"day": day, "partner": partner, "action": "peer"})
                 self.remember_social(partner_state, {"day": day, "partner": actor, "action": "peer"})
+                update_long_term_memory(partner_state,
+                                        {"day": day, "action": "peer", "partner": actor})
                 writer.execute("UPDATE campus_students SET body=? WHERE id=?",
                                (dumps(partner_state), partner))
             self.remember(state, memory)
@@ -588,6 +616,7 @@ class Campus:
                 state["social_avoidance"] = clamp(state["social_avoidance"] +
                                                    (0.004 if state["connection"] < 0.3 else -0.002))
                 state["low_streak"] = state["low_streak"] + 1 if state["connection"] < 0.3 else 0
+                decay_long_term_memory(state, day)
                 writer.execute("UPDATE campus_students SET body=? WHERE id=?", (dumps(state), actor))
                 self.event(writer, day, actor, "student_state", "completed", detail={
                     "phase": "end_of_day_v1", "stress": state["stress"],
@@ -597,6 +626,8 @@ class Campus:
                     "belonging": state["belonging"],
                     "help_seeking_belief": state["help_seeking_belief"],
                     "social_avoidance": state["social_avoidance"],
+                    "memory_action_counts": state["long_term_memory"]["action_counts"],
+                    "memory_partner_traces": state["long_term_memory"]["partners"],
                     "missed_course_streak": state["missed_course_streak"],
                     "supported": state["supported"]})
                 states.append(state)
@@ -685,7 +716,7 @@ class CampusInformation:
                 state = json.loads(body)
                 return {"partner": partner, "partner_state": {
                     key: state[key] for key in ("stress", "mood", "connection", "recent_events",
-                                             "social_memory")}}
+                                             "social_memory", "long_term_memory")}}
             data = self.campus.store.read(partner_context)
         elif ref.kind == "student":
             state = self.campus.student(ref.key)
@@ -694,7 +725,8 @@ class CampusInformation:
                                                   "help_seeking_belief", "social_avoidance",
                                                   "missed_course_streak",
                                                   "supported", "pending_day", "outreach_seen", "recent_events",
-                                                  "social_memory", "supported_day", "follow_up_sent")}
+                                                  "social_memory", "long_term_memory",
+                                                  "supported_day", "follow_up_sent")}
             data["memory_context"] = {
                 "recent_events": memory_context(state["recent_events"], scope.moment.time),
                 "social_memory": memory_context(state["social_memory"], scope.moment.time),

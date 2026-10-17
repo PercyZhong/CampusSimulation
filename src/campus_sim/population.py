@@ -25,6 +25,7 @@ def make_population(config):
                      "low_streak": 0, "ever_requested": False, "ever_supported": False,
                      "missed_course_streak": 0,
                      "outreach_seen": False, "recent_events": [], "social_memory": [],
+                     "long_term_memory": {"action_counts": {}, "partners": {}},
                      "initial_group": "lower" if connection < 0.475 else "higher"})
     edges = [(rows[i]["id"], rows[(i + 1) % len(rows)]["id"]) for i in range(len(rows))]
     return rows, edges

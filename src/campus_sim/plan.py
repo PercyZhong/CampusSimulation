@@ -72,6 +72,7 @@ def build(raw):
                          event["action"] == "peer"
                          for event in state["recent_events"]),
                      "social_memory_count": len(state["social_memory"]),
+                     "long_term_memory": state["long_term_memory"],
                      "scenario": scenario_context(config.seed, session.moment.time, state),
                      "long_term_state": {key: state[key] for key in (
                          "academic_engagement", "self_efficacy", "belonging",
@@ -92,10 +93,15 @@ def build(raw):
                 partner = invitation.value["partner"]
                 if peer_context["partner"] != partner:
                     raise ValueError("peer invitation partner does not match dialogue context")
+                shared_memory = state["memory_context"]["social_memory"]
+                partner_trace = state["long_term_memory"]["partners"].get(partner)
+                if partner_trace:
+                    shared_memory = [*shared_memory,
+                                     {"partner": partner, "long_term_trace": partner_trace}]
                 turns, dialogue_usage = model_client.peer_dialogue(
                     day=session.moment.time, actor=actor, partner=partner,
                     actor_state=state, partner_state=peer_context["partner_state"],
-                    shared_memory=state["memory_context"]["social_memory"])
+                    shared_memory=shared_memory)
                 args = {"partner": partner, "turns": turns, "usage": dialogue_usage,
                         "prompt_version": DIALOGUE_PROMPT_VERSION}
         result = await session.actions.invoke("campus." + action,

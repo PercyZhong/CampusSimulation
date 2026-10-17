@@ -14,7 +14,7 @@ PROVIDERS = {
     "anthropic": {"env": "ANTHROPIC_API_KEY", "models": ("claude-sonnet-4-5", "claude-haiku-4-5")},
 }
 ACTION_NAMES = frozenset(("attend", "rest", "peer", "request", "accept_support"))
-DECISION_PROMPT_VERSION = "peer-neutral-v2"
+DECISION_PROMPT_VERSION = "long-memory-v1"
 DIALOGUE_PROMPT_VERSION = "peer-dialogue-v1"
 OPENAI_COMPATIBLE = {
     "deepseek": "https://api.deepseek.com/chat/completions",
@@ -175,7 +175,9 @@ class ModelClient:
                   "Choose exactly one action from policy.available_actions. "
                   "Return only JSON with an action field. No diagnosis or risk prediction. "
                   "Consider your current needs, long-term student traits, the course.scenario "
-                  "context, recent_events, social_memory and memory_context before choosing. "
+                  "context, recent_events, social_memory, long_term_memory and memory_context "
+                  "before choosing. Long-term memory contains factual counts and fading "
+                  "partner salience; do not treat it as a diagnosis. "
                   "Attend means participating in campus "
                   "activities. Rest means taking time to recover. Peer means starting a "
                   "specific four-turn conversation with a connected student. "
