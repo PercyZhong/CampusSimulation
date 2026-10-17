@@ -195,6 +195,26 @@ def peer_response(seed, day, actor, partner, partner_state):
     return "accepted"
 
 
+def scenario_context(seed, day, student):
+    """Deterministic continuous campus pressures exposed to every decision."""
+    recent = student.get("recent_events", [])
+    attend_streak = 0
+    for event in reversed(recent):
+        if event.get("action") == "attend":
+            attend_streak += 1
+        else:
+            break
+    peer_recent = sum(event.get("action") == "peer" for event in recent)
+    exam_days = 4 - ((day - 1) % 7)
+    return {"exam_days_remaining": exam_days, "exam_period": exam_days <= 2,
+            "consecutive_attendance": attend_streak,
+            "recent_social_contacts": peer_recent,
+            "low_social_signal": student.get("connection", 0.5) < 0.3 and peer_recent == 0,
+            "help_waiting": student.get("pending_day") is not None,
+            "post_support_recovery": (student.get("supported_day") is not None
+                                       and day - student["supported_day"] <= 3)}
+
+
 def next_stress(stress, recovery, load, supported):
     """Daily workload and recovery with bounded adaptation to sustained load."""
     return clamp(stress + load - 0.055 * recovery -

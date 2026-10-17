@@ -14,7 +14,7 @@ from society0.kernel.runner import RunContract, RunPlan
 from society0.kernel.runtime import DriverResult, runtime_plugin
 
 from . import SOCIETY0_SHA
-from .domain import Config, action_choice, policy_context
+from .domain import Config, action_choice, policy_context, scenario_context
 from .mechanism import campus_plugin
 from .models import DECISION_PROMPT_VERSION, DIALOGUE_PROMPT_VERSION, ModelClient
 from .schedule import campus_schedule_plugin
@@ -67,6 +67,7 @@ def build(raw):
                          event["action"] == "peer"
                          for event in state["recent_events"]),
                      "social_memory_count": len(state["social_memory"]),
+                     "scenario": scenario_context(config.seed, session.moment.time, state),
                  },
                  "policy": policy, "usage": usage})
         args = {}

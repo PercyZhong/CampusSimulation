@@ -454,6 +454,8 @@ def summarize(run_dir):
                "relationship_mean_strength": (sum(relationship_strengths) /
                                                len(relationship_strengths)
                                                if relationship_strengths else None),
+               "scenario_trigger_events": sum(e["action"] == "scenario_trigger"
+                                               for e in events),
                **trajectories,
                "support_window_metrics": support_windows,
                "support_recovery_metrics": recovery,

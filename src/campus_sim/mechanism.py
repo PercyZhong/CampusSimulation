@@ -17,6 +17,7 @@ from .domain import (
     policy_components,
     policy_context,
     residence_context,
+    scenario_context,
     unit,
 )
 from .language import language_backend
@@ -467,6 +468,12 @@ class Campus:
                 "mean_mood_delta": round(sum(s["mood"] - b["mood"]
                                               for s, b in zip(states, before_states)) / len(states), 6),
                 "relationship_decay_updates": rel_decay,
+                "scenario": {"exam_period": 4 - ((day - 1) % 7) <= 2,
+                              "exam_days_remaining": 4 - ((day - 1) % 7),
+                              "help_waiting_students": sum(s["pending_day"] is not None for s in states),
+                              "post_support_recovery_students": sum(
+                                  s["supported_day"] is not None and day - s["supported_day"] <= 3
+                                  for s in states)},
             }
             writer.execute("INSERT INTO campus_days VALUES(?,?)", (day, dumps(metrics)))
             return metrics
@@ -533,7 +540,9 @@ class CampusInformation:
         elif ref.kind == "course":
             data = {"day": scope.moment.time,
                     "academic_load": academic_event(self.campus.config.seed, scope.moment.time),
-                    "context": academic_context(self.campus.config.seed, scope.moment.time, scope.actor)}
+                    "context": academic_context(self.campus.config.seed, scope.moment.time, scope.actor),
+                    "scenario": scenario_context(self.campus.config.seed, scope.moment.time,
+                                                  self.campus.student(scope.actor))}
         else:
             data = {"peer_interactions_today": self.campus.store.read(lambda view: [row[0] for row in
                 view.iter_query("SELECT DISTINCT e.actor FROM campus_events e JOIN campus_edges t ON (t.a=? AND t.b=e.actor) OR (t.b=? AND t.a=e.actor) WHERE e.day=? AND e.action='peer' AND e.status='completed' ORDER BY e.actor",
