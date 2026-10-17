@@ -1,7 +1,10 @@
 """Trajectory counts use each student's events in order, including rejected choices."""
 
+import pytest
+
 from campus_sim.analysis import (
     ACTION_NAMES,
+    campus_environment_metrics,
     course_exposure_metrics,
     interaction_network_metrics,
     interaction_records,
@@ -175,6 +178,30 @@ def test_course_exposure_distinguishes_missing_context_from_zero_attendance():
     assert missing["context_missing_events"] == 1
     assert empty["attendance_events"] == 0
     assert empty["context_missing_events"] == 0
+
+
+def test_environment_metrics_count_observed_absences_and_rejections():
+    events = [event(1, 1, "s000", "attend", detail={
+                  "context": {"venue": "building-1"}}),
+              event(2, 1, "s001", "attend", "rejected", detail={
+                  "context": {"venue": "building-1"}}),
+              event(3, 1, "s001", "course_absence", detail={
+                  "missed_course_streak": 1})]
+    events[1]["reason"] = "capacity_full"
+    result = campus_environment_metrics(events)
+    assert result["course_attendance_events"] == 1
+    assert result["course_rejection_reasons"] == {"capacity_full": 1}
+    assert result["missed_scheduled_courses"] == 1
+    assert result["venue_usage"] == {"building-1": 1}
+
+
+def test_environment_metrics_reject_overbooked_course():
+    schedule = {"course_id": "course-100", "venue": "building-1", "slot": "morning",
+                "open": True, "capacity": 1}
+    events = [event(1, 1, "s000", "attend", detail={"schedule": schedule}),
+              event(2, 1, "s001", "attend", detail={"schedule": schedule})]
+    with pytest.raises(ValueError, match="capacity"):
+        campus_environment_metrics(events)
 
 
 def test_support_recovery_uses_student_snapshots_and_tracks_missing_data():

@@ -226,6 +226,79 @@ def test_class_contacts_require_shared_course_and_prior_arrival(tmp_path):
     asyncio.run(exercise())
 
 
+def test_course_calendar_rejects_closed_full_and_conflicting_bookings(tmp_path, monkeypatch):
+    import asyncio
+
+    from society0.kernel.composition import compose
+    from society0.kernel.interaction import InteractionScope, Moment, Ref
+
+    from campus_sim.domain import campus_calendar
+    from campus_sim.plan import build
+
+    def small_calendar(seed, day, student_id):
+        calendar = campus_calendar(seed, day, student_id)
+        calendar["course"]["capacity"] = 2
+        return calendar
+
+    monkeypatch.setattr("campus_sim.mechanism.campus_calendar", small_calendar)
+
+    raw = json.loads(Path("configs/baseline.json").read_text(encoding="utf-8"))
+    raw.update(end=7, n_students=6)
+
+    async def exercise():
+        async with compose(tmp_path / "calendar", build(raw).plugins) as host:
+            actions = host.service("interaction", "actions")
+            store = host.service("storage", "store")
+            with InteractionScope("s000", Moment(6, "decide")) as scope:
+                closed = await actions.bound(scope).invoke(
+                    "campus.attend", Ref("campus", "student", "s000"), {})
+                assert closed.status == "rejected"
+                assert closed.value["reason"] == "course_closed"
+            for index in range(2):
+                actor = f"s{index:03d}"
+                with InteractionScope(actor, Moment(1, "decide")) as scope:
+                    result = await actions.bound(scope).invoke(
+                        "campus.attend", Ref("campus", "student", actor), {})
+                    assert result.status == "completed"
+            with InteractionScope("s000", Moment(1, "decide")) as scope:
+                conflict = await actions.bound(scope).invoke(
+                    "campus.attend", Ref("campus", "student", "s000"), {})
+                assert conflict.status == "rejected"
+                assert conflict.value["reason"] == "schedule_conflict"
+            with InteractionScope("s002", Moment(1, "decide")) as scope:
+                full = await actions.bound(scope).invoke(
+                    "campus.attend", Ref("campus", "student", "s002"), {})
+                assert full.status == "rejected"
+                assert full.value["reason"] == "capacity_full"
+            bookings = store.read(lambda view: view.query(
+                "SELECT COUNT(*) FROM campus_venue_bookings WHERE day=1"))[0][0]
+            assert bookings == 2
+
+    asyncio.run(exercise())
+
+
+def test_course_absence_only_counts_scheduled_days(tmp_path):
+    import asyncio
+
+    from society0.kernel.runner import run_plan
+
+    from campus_sim.analysis import export
+    from campus_sim.plan import build
+
+    raw = json.loads(Path("configs/baseline.json").read_text(encoding="utf-8"))
+    raw.update(end=7, n_students=2)
+    output = tmp_path / "seven-day-calendar"
+    asyncio.run(run_plan(output, build(raw)))
+    summary = export(output)
+    events = [json.loads(line) for line in (output / "events.jsonl").read_text(
+        encoding="utf-8").splitlines()]
+    absences = [event for event in events if event["action"] == "course_absence"]
+    assert all(event["day"] <= 5 for event in absences)
+    assert summary["campus_environment_metrics"]["missed_scheduled_courses"] == len(absences)
+    assert not any(event["action"] == "attend" and event["status"] == "completed"
+                   and event["day"] > 5 for event in events)
+
+
 def test_residence_presence_only_lists_prior_roommates(tmp_path):
     import asyncio
 

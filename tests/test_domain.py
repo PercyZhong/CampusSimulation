@@ -7,6 +7,7 @@ from campus_sim.domain import (
     academic_context,
     academic_event,
     action_choice,
+    campus_calendar,
     memory_context,
     next_mood,
     next_stress,
@@ -16,6 +17,16 @@ from campus_sim.domain import (
     residence_context,
     unit,
 )
+
+
+def test_campus_calendar_is_reproducible_and_has_weekly_opening_rules():
+    first = campus_calendar(11, 1, "s000")
+    assert first == campus_calendar(11, 1, "s000")
+    assert first["course"]["open"] is True
+    assert first["course"]["capacity"] == 5
+    assert first["cafeteria"]["open"] is True
+    assert campus_calendar(11, 6, "s000")["course"]["open"] is False
+    assert campus_calendar(11, 7, "s000")["library"]["open"] is False
 
 
 def test_peer_response_is_deterministic_and_auditable():

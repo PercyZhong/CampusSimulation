@@ -236,6 +236,46 @@ def course_exposure_metrics(events):
                 for actor, row in sorted(by_actor.items())}}
 
 
+def campus_environment_metrics(events):
+    """Count observed course bookings and rejected attempts by recorded reason."""
+    completed = [event for event in events if event["action"] == "attend"
+                 and event["status"] == "completed"]
+    rejected = [event for event in events if event["action"] == "attend"
+                and event["status"] == "rejected"]
+    venues = Counter((event["detail"].get("context") or {}).get("venue")
+                     for event in completed)
+    venues.pop(None, None)
+    occupancy = Counter()
+    actor_slots = set()
+    for event in completed:
+        schedule = event["detail"].get("schedule")
+        if not isinstance(schedule, dict):
+            continue
+        if not schedule.get("open"):
+            raise ValueError("attendance recorded for a closed course")
+        seat = (event["day"], schedule["course_id"], schedule["venue"], schedule["slot"])
+        actor_slot = (event["day"], event["actor"], schedule["slot"])
+        if actor_slot in actor_slots:
+            raise ValueError("student has conflicting campus bookings")
+        actor_slots.add(actor_slot)
+        occupancy[seat] += 1
+        if occupancy[seat] > schedule["capacity"]:
+            raise ValueError("course occupancy exceeds recorded capacity")
+    absences = [event for event in events if event["action"] == "course_absence"
+                and event["status"] == "completed"]
+    missed = Counter(event["actor"] for event in absences)
+    return {"course_attendance_events": len(completed),
+            "course_rejected_attempts": len(rejected),
+            "course_rejection_reasons": dict(Counter(event.get("reason") for event in rejected)),
+            "venue_usage": dict(sorted(venues.items())),
+            "scheduled_course_sessions": len(occupancy),
+            "missed_scheduled_courses": len(absences),
+            "students_with_scheduled_absence": len(missed),
+            "longest_missed_course_streak": max(
+                (event["detail"].get("missed_course_streak", 0) for event in absences),
+                default=0)}
+
+
 def interaction_network_metrics(events):
     """Track observed student pairs by day and interaction source."""
     sources = ("peer", "class_contact", "study_group_copresence",
@@ -345,6 +385,7 @@ def summarize(run_dir):
     support_windows = support_window_metrics(events, status["complete"]["step"])
     recovery = support_recovery_metrics(events, status["complete"]["step"])
     course_exposure = course_exposure_metrics(events)
+    environment = campus_environment_metrics(events)
     network = interaction_network_metrics(events)
     relationships = Counter()
     relationship_strengths = []
@@ -465,6 +506,7 @@ def summarize(run_dir):
                "support_window_metrics": support_windows,
                "support_recovery_metrics": recovery,
                "course_exposure_metrics": course_exposure,
+               "campus_environment_metrics": environment,
                **network,
                "trajectory_unique_peer_partners": len(peer_partners - {None}),
                "class_attendance_interactions": len(classmate_events),

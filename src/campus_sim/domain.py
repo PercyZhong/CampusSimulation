@@ -173,6 +173,23 @@ def academic_context(seed, day, student_id):
             "section": f"S{cohort:02d}"}
 
 
+def campus_calendar(seed, day, student_id):
+    """Synthetic daily venue schedule; presence still requires an action."""
+    course = academic_context(seed, day, student_id)
+    weekday = (day - 1) % 7
+    return {"day": day,
+            "course": {**course, "slot": "morning", "open": weekday < 5,
+                       "capacity": 5},
+            "library": {"venue": "library-main", "slot": "afternoon",
+                        "open": weekday < 6, "capacity": 20},
+            "cafeteria": {"venue": "cafeteria-main", "slot": "midday",
+                          "open": True, "capacity": 30},
+            "club": {**club_context(student_id), "slot": "afternoon",
+                     "open": weekday in (2, 5), "capacity": 5},
+            "residence": {**residence_context(student_id), "slot": "evening",
+                          "open": True, "capacity": 3}}
+
+
 def residence_context(student_id):
     """Stable synthetic three-student residence groups."""
     return {"venue": f"residence-{int(student_id[1:]) // 3:02d}"}
@@ -208,6 +225,7 @@ def scenario_context(seed, day, student):
     exam_days = (4 - ((day - 1) % 7)) % 7
     return {"exam_days_remaining": exam_days, "exam_period": exam_days <= 2,
             "consecutive_attendance": attend_streak,
+            "missed_course_streak": student.get("missed_course_streak", 0),
             "recent_social_contacts": peer_recent,
             "low_social_signal": student.get("connection", 0.5) < 0.3 and peer_recent == 0,
             "help_waiting": student.get("pending_day") is not None,
@@ -245,4 +263,7 @@ def action_choice(student, day, config):
                        - 0.1 * (student.get("social_avoidance", 0.5) - 0.5)
                        + (0.03 if scenario["low_social_signal"] else 0))
     rest_limit = clamp(peer_limit + 0.22 + (0.04 if scenario["exam_period"] else 0))
-    return "peer" if draw < peer_limit else "rest" if draw < rest_limit else "attend"
+    other = "peer" if draw < peer_limit else "rest" if draw < rest_limit else "attend"
+    if other == "attend" and not campus_calendar(config.seed, day, sid)["course"]["open"]:
+        return "rest"
+    return other

@@ -52,8 +52,13 @@ def build(raw):
             action = action_choice(state, session.moment.time, config)
         else:
             policy = policy_context(config, state, session.moment.time)
+            calendar = json.loads(course.data)
+            if (not calendar["calendar"]["course"]["open"]
+                    or calendar["course_available_slots"] == 0):
+                policy["available_actions"] = [action for action in policy["available_actions"]
+                                               if action != "attend"]
             action, usage = model_client.decide(
-                day=session.moment.time, student=state, course=json.loads(course.data),
+                day=session.moment.time, student=state, course=calendar,
                 service=json.loads(service.data), peers=json.loads(peers.data), policy=policy)
             await session.actions.invoke("campus.model_decision", Ref("campus", "student", actor),
                 {"action": action, "provider": config.model_provider,

@@ -8,8 +8,8 @@ from society0.kernel.plugins import Plugin
 from .domain import (
     academic_context,
     academic_event,
+    campus_calendar,
     clamp,
-    club_context,
     memory_context,
     next_mood,
     next_stress,
@@ -30,6 +30,9 @@ SCHEMA = (
     ("CREATE TABLE campus_staff_shifts(day INTEGER NOT NULL,actor TEXT NOT NULL,"
      "slots INTEGER NOT NULL,PRIMARY KEY(day,actor))"),
     "CREATE TABLE campus_edges(a TEXT NOT NULL,b TEXT NOT NULL,PRIMARY KEY(a,b))",
+    ("CREATE TABLE campus_venue_bookings(day INTEGER NOT NULL,actor TEXT NOT NULL,"
+     "venue TEXT NOT NULL,slot TEXT NOT NULL,activity TEXT NOT NULL,"
+     "PRIMARY KEY(day,actor,slot))"),
     ("CREATE TABLE campus_peer_invitations(day INTEGER NOT NULL,actor TEXT NOT NULL,"
      "partner TEXT NOT NULL,response TEXT NOT NULL,PRIMARY KEY(day,actor))"),
     ("CREATE TABLE campus_relationships(a TEXT NOT NULL,b TEXT NOT NULL,strength REAL NOT NULL,"
@@ -247,8 +250,27 @@ class Campus:
                     "WHERE a=? OR b=? ORDER BY 1", (actor, actor, actor))
                 if not peers:
                     reason = "no_peer_edge"
+            if action == "attend":
+                schedule = campus_calendar(self.config.seed, day, actor)["course"]
+                context = {key: schedule[key] for key in ("course_id", "venue", "section")}
+                bookings = writer.query(
+                    "SELECT COUNT(*) FROM campus_venue_bookings "
+                    "WHERE day=? AND venue=? AND slot=? AND activity=?",
+                    (day, schedule["venue"], schedule["slot"],
+                     schedule["course_id"]))[0][0]
+                conflict = writer.query(
+                    "SELECT 1 FROM campus_venue_bookings WHERE day=? AND actor=? AND slot=?",
+                    (day, actor, schedule["slot"]), max_rows=1)
+                if not schedule["open"]:
+                    reason = "course_closed"
+                elif conflict:
+                    reason = "schedule_conflict"
+                elif bookings >= schedule["capacity"]:
+                    reason = "capacity_full"
             if reason:
-                self.event(writer, day, actor, action, "rejected", reason)
+                detail = ({"context": context, "schedule": schedule,
+                           "booked_slots": bookings} if action == "attend" else None)
+                self.event(writer, day, actor, action, "rejected", reason, detail)
                 return {"status": "rejected", "reason": reason}
             if action == "request":
                 ordinal = writer.query("SELECT COALESCE(MAX(ordinal),0)+1 FROM campus_queue")[0][0]
@@ -299,6 +321,9 @@ class Campus:
                 state["belonging"] = clamp(state["belonging"] + 0.025)
                 state["social_avoidance"] = clamp(state["social_avoidance"] - 0.02)
             elif action == "attend":
+                writer.execute("INSERT INTO campus_venue_bookings VALUES(?,?,?,?,?)",
+                               (day, actor, schedule["venue"], schedule["slot"],
+                                schedule["course_id"]))
                 state["willingness"] = clamp(state["willingness"] + 0.005)
                 state["academic_engagement"] = clamp(state["academic_engagement"] + 0.012)
                 state["self_efficacy"] = clamp(state["self_efficacy"] + 0.006)
@@ -340,7 +365,8 @@ class Campus:
                       if action == "peer" else
                       {"context": academic_context(self.config.seed, day, actor),
                        "classmate": classmate,
-                       "contact_rule": "same_course_prior_attendance_v1"}
+                       "contact_rule": "same_course_prior_attendance_v1",
+                       "schedule": schedule}
                       if action == "attend" else None)
             if action == "peer":
                 detail["partner_response"] = "accepted"
@@ -359,10 +385,8 @@ class Campus:
             self.remember(state, memory)
             group_detail = None
             residence_detail = None
-            club_detail = None
             if action == "attend":
                 context = academic_context(self.config.seed, day, actor)
-                club = club_context(actor)
                 ordinal = writer.query(
                     "SELECT COALESCE(MAX(ordinal),0)+1 FROM campus_interactions")[0][0]
                 writer.execute("INSERT INTO campus_interactions VALUES(?,?,?,?,?,?)",
@@ -386,30 +410,19 @@ class Campus:
                     partner_state["connection"] = clamp(partner_state["connection"] + 0.004)
                     writer.execute("UPDATE campus_students SET body=? WHERE id=?",
                                    (dumps(partner_state), classmate))
-                club_arrivals = writer.query(
-                    "SELECT actor,detail FROM campus_events "
-                    "WHERE day=? AND action='attend' AND status='completed' ORDER BY ordinal",
-                    (day,))
-                clubmates = [sid for sid, encoded in club_arrivals
-                             if sid != actor
-                             and json.loads(encoded).get("club_context") == club]
-                if clubmates:
-                    participants = [*clubmates, actor]
-                    club_detail = {"participants": participants, "context": club,
-                                   "trigger": "same_club_prior_attendance_v1"}
             elif action == "rest":
-                residence = residence_context(actor)
+                residence = campus_calendar(self.config.seed, day, actor)["residence"]
                 arrivals = writer.query(
                     "SELECT actor,context FROM campus_interactions "
                     "WHERE day=? AND interaction='residence_presence' ORDER BY ordinal", (day,))
                 roommates = [sid for sid, encoded in arrivals
-                             if sid != actor and json.loads(encoded) == residence]
+                             if sid != actor and json.loads(encoded).get("venue") == residence["venue"]]
                 ordinal = writer.query(
                     "SELECT COALESCE(MAX(ordinal),0)+1 FROM campus_interactions")[0][0]
                 writer.execute("INSERT INTO campus_interactions VALUES(?,?,?,?,?,?)",
                                (ordinal, day, actor, None, "residence_presence",
-                                dumps(residence)))
-                residence_detail = {"context": residence, "roommates": roommates,
+                                dumps(residence_context(actor))))
+                residence_detail = {"context": residence_context(actor), "roommates": roommates,
                                     "trigger": "shared_residence_presence_v1"}
             writer.execute("UPDATE campus_students SET body=? WHERE id=?", (dumps(state), actor))
             if action == "peer":
@@ -424,17 +437,12 @@ class Campus:
                 detail = {}
             if residence_detail is not None:
                 detail.update(residence_detail)
-            if action == "attend":
-                detail["club_context"] = club_context(actor)
             detail["feedback"] = feedback
             self.event(writer, day, actor, action, "completed",
                        detail=detail)
             if group_detail is not None:
                 self.event(writer, day, actor, "study_group", "completed",
                            detail=group_detail)
-            if club_detail is not None:
-                self.event(writer, day, actor, "club_copresence", "completed",
-                           detail=club_detail)
             return {"status": "completed", "action": action}
         result = self.store.transaction(write)
         return ActionResult(result["status"], result)
@@ -478,9 +486,26 @@ class Campus:
                                    (day, follow_used, follow_used))
             states = []
             before_states = []
+            missed_courses = 0
             for actor, body in list(writer.iter_query("SELECT id,body FROM campus_students ORDER BY id")):
                 state = json.loads(body)
                 before_states.append(state.copy())
+                course = campus_calendar(self.config.seed, day, actor)["course"]
+                absence_streak = state.get("missed_course_streak", 0)
+                if course["open"]:
+                    present = writer.query(
+                        "SELECT 1 FROM campus_venue_bookings WHERE day=? AND actor=? "
+                        "AND activity=?", (day, actor, course["course_id"]), max_rows=1)
+                    if present:
+                        absence_streak = 0
+                    else:
+                        absence_streak += 1
+                        missed_courses += 1
+                        self.event(writer, day, actor, "course_absence", "completed",
+                                   detail={"course_id": course["course_id"],
+                                           "missed_course_streak": absence_streak,
+                                           "venue": course["venue"]})
+                state["missed_course_streak"] = absence_streak
                 if state["pending_day"] is not None and day > state["pending_day"]:
                     state["wait_days"] += 1
                 state["stress"] = next_stress(state["stress"], state["recovery"],
@@ -510,6 +535,7 @@ class Campus:
                     "belonging": state["belonging"],
                     "help_seeking_belief": state["help_seeking_belief"],
                     "social_avoidance": state["social_avoidance"],
+                    "missed_course_streak": state["missed_course_streak"],
                     "supported": state["supported"]})
                 states.append(state)
             rel_decay = 0
@@ -527,6 +553,7 @@ class Campus:
                 "available_slots": available,
                 "follow_ups_today": follow_used,
                 "pending": sum(s["pending_day"] is not None for s in states),
+                "missed_courses_today": missed_courses,
                 "low_connection_7d": sum(s["low_streak"] >= 7 for s in states),
                 "mean_stress": round(sum(s["stress"] for s in states) / len(states), 6),
                 "mean_mood": round(sum(s["mood"] for s in states) / len(states), 6),
@@ -600,6 +627,7 @@ class CampusInformation:
             data = {key: state[key] for key in ("id", "stress", "mood", "recovery", "connection", "willingness",
                                                   "academic_engagement", "self_efficacy", "belonging",
                                                   "help_seeking_belief", "social_avoidance",
+                                                  "missed_course_streak",
                                                   "supported", "pending_day", "outreach_seen", "recent_events",
                                                   "social_memory", "supported_day", "follow_up_sent")}
             data["memory_context"] = {
@@ -615,9 +643,18 @@ class CampusInformation:
                     "available_slots": self.campus.store.read(lambda view:
                         self.campus.available_slots(view, scope.moment.time))}
         elif ref.kind == "course":
+            calendar = campus_calendar(self.campus.config.seed, scope.moment.time, scope.actor)
+            scheduled = calendar["course"]
+            occupied = self.campus.store.read(lambda view: view.query(
+                "SELECT COUNT(*) FROM campus_venue_bookings "
+                "WHERE day=? AND venue=? AND slot=? AND activity=?",
+                (scope.moment.time, scheduled["venue"], scheduled["slot"],
+                 scheduled["course_id"]))[0][0])
             data = {"day": scope.moment.time,
                     "academic_load": academic_event(self.campus.config.seed, scope.moment.time),
                     "context": academic_context(self.campus.config.seed, scope.moment.time, scope.actor),
+                    "calendar": calendar, "course_available_slots": max(
+                        0, scheduled["capacity"] - occupied) if scheduled["open"] else 0,
                     "scenario": scenario_context(self.campus.config.seed, scope.moment.time,
                                                   self.campus.student(scope.actor))}
         else:
@@ -663,7 +700,7 @@ def campus_plugin(config):
             actions.register(Action("campus." + name, ("campus", "student"), name, action_schema,
                 lambda scope, target, args, name=name: campus.act(scope, target, name, args),
                 available=lambda scope, target: target.key == scope.actor),
-                dependencies=("campus_students", "campus_queue", "campus_edges", "campus_relationships", "campus_peer_invitations", "campus_service_usage", "campus_follow_up_usage", "campus_interactions"))
+                dependencies=("campus_students", "campus_queue", "campus_edges", "campus_relationships", "campus_peer_invitations", "campus_venue_bookings", "campus_service_usage", "campus_follow_up_usage", "campus_interactions"))
         actions.register(Action("campus.staff_shift", ("campus", "staff"), "staff_shift", schema,
             lambda scope, target, args: campus.staff_shift(scope, target),
             available=lambda scope, target: target.key == scope.actor),
