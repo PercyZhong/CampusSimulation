@@ -296,18 +296,16 @@ class Campus:
                     writer.execute("UPDATE campus_students SET body=? WHERE id=?",
                                    (dumps(partner_state), classmate))
                 club_arrivals = writer.query(
-                    "SELECT actor,context FROM campus_interactions "
-                    "WHERE day=? AND interaction='club_presence' ORDER BY ordinal", (day,))
+                    "SELECT actor,detail FROM campus_events "
+                    "WHERE day=? AND action='attend' AND status='completed' ORDER BY ordinal",
+                    (day,))
                 clubmates = [sid for sid, encoded in club_arrivals
-                             if sid != actor and json.loads(encoded) == club]
+                             if sid != actor
+                             and json.loads(encoded).get("club_context") == club]
                 if clubmates:
                     participants = [*clubmates, actor]
                     club_detail = {"participants": participants, "context": club,
                                    "trigger": "same_club_prior_attendance_v1"}
-                ordinal = writer.query(
-                    "SELECT COALESCE(MAX(ordinal),0)+1 FROM campus_interactions")[0][0]
-                writer.execute("INSERT INTO campus_interactions VALUES(?,?,?,?,?,?)",
-                               (ordinal, day, actor, None, "club_presence", dumps(club)))
             elif action == "rest":
                 residence = residence_context(actor)
                 arrivals = writer.query(
