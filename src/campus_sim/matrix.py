@@ -5,7 +5,7 @@ import re
 import statistics
 from pathlib import Path
 
-from .analysis import ACTION_NAMES, trajectory_metrics
+from .analysis import ACTION_NAMES, interaction_network_metrics, trajectory_metrics
 
 PATTERN = re.compile(
     r"^v063-matrix-(rule|qwen|deepseek)-(baseline|outreach|easier_access)-seed(11|22|33)-10d$"
@@ -47,6 +47,7 @@ def _row(path):
     valid_peers = [event for event in llm_peers
                    if len(event["detail"].get("turns", [])) == 4]
     trajectories = trajectory_metrics(events)
+    network = interaction_network_metrics(events)
     row = {"run": path.name, "driver": driver, "condition": condition, "seed": seed,
            "model_provider": summary.get("model_provider"), "model_id": summary.get("model_id"),
            "complete_steps": summary["complete_steps"],
@@ -62,6 +63,10 @@ def _row(path):
            "peer_repeat_contacts": trajectories["peer_repeat_contacts"],
            "peer_repeat_contact_rate": trajectories["peer_repeat_contact_rate"],
            "trajectory_transition_matrix": trajectories["trajectory_transition_matrix"],
+           "interaction_network_unique_edges": network["interaction_network_unique_edges"],
+           "interaction_network_edges_by_source": network[
+               "interaction_network_edges_by_source"],
+           "interaction_network_daily_change": network["interaction_network_daily_change"],
            "peer_completed": len(peers), "peer_valid_count": len(valid_peers),
            "peer_dialogue_status": ("llm_validated" if llm_peers and len(valid_peers) == len(llm_peers)
                                      else "rule_offline" if driver == "rule" else "no_peer_selected"),
@@ -86,7 +91,8 @@ def build_report(root="runs"):
     metrics = ("requested_rate", "supported_rate", "mean_stress", "mean_mood", "model_calls",
                "peer_completed", "peer_valid_rate", "trajectory_action_transitions",
                "trajectory_longest_same_action_streak", "peer_relationships_unique",
-               "peer_repeat_contacts", "peer_repeat_contact_rate")
+               "peer_repeat_contacts", "peer_repeat_contact_rate",
+               "interaction_network_unique_edges")
     by_group = {}
     for driver in DRIVERS:
         for condition in CONDITIONS:
@@ -102,6 +108,10 @@ def build_report(root="runs"):
                 left: {right: sum(row["trajectory_transition_matrix"][left][right]
                                   for row in subset) for right in ACTION_NAMES}
                 for left in ACTION_NAMES}
+            group["interaction_network_edges_by_source"] = {
+                source: _stats([row["interaction_network_edges_by_source"][source]
+                                for row in subset])
+                for source in ("peer", "class_contact", "study_group_copresence")}
             by_group[f"{driver}:{condition}"] = group
     paired = []
     for driver in DRIVERS:

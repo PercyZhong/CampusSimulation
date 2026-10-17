@@ -50,6 +50,51 @@ def trajectory_metrics(events):
                                          if peer_pairs else None)}
 
 
+def interaction_network_metrics(events):
+    """Track observed student pairs by day and interaction source."""
+    sources = ("peer", "class_contact", "study_group_copresence")
+    occurrences = []
+    for event in events:
+        if event["status"] != "completed":
+            continue
+        detail = event["detail"]
+        if event["action"] == "peer" and detail.get("partner"):
+            pairs = [(event["actor"], detail["partner"])]
+            source = "peer"
+        elif event["action"] == "attend" and detail.get("classmate"):
+            pairs = [(event["actor"], detail["classmate"])]
+            source = "class_contact"
+        elif event["action"] == "study_group":
+            pairs = list(itertools.combinations(detail["participants"], 2))
+            source = "study_group_copresence"
+        else:
+            continue
+        for left, right in pairs:
+            if left == right:
+                raise ValueError("interaction network contains self contact")
+            occurrences.append((event["day"], event["ordinal"], source,
+                                tuple(sorted((left, right)))))
+    observed = set()
+    by_source = {source: set() for source in sources}
+    daily = {}
+    for day, _, source, pair in sorted(occurrences):
+        row = daily.setdefault(day, {"day": day, "contacts": 0,
+                                     "new_edges": 0, "repeat_contacts": 0})
+        row["contacts"] += 1
+        if pair in observed:
+            row["repeat_contacts"] += 1
+        else:
+            row["new_edges"] += 1
+            observed.add(pair)
+        by_source[source].add(pair)
+    return {"interaction_network_unique_edges": len(observed),
+            "interaction_network_edges_by_source": {
+                source: len(by_source[source]) for source in sources},
+            "interaction_network_contacts_by_source": {
+                source: sum(item[2] == source for item in occurrences) for source in sources},
+            "interaction_network_daily_change": list(daily.values())}
+
+
 def _read(run_dir):
     with Observation(run_dir) as observation:
         status = observation.status()
@@ -99,6 +144,7 @@ def summarize(run_dir):
     peer_llm = [e for e in peer_events if e["detail"].get("backend") == "llm"]
     peer_valid = [e for e in peer_llm if len(e["detail"].get("turns", [])) == 4]
     trajectories = trajectory_metrics(events)
+    network = interaction_network_metrics(events)
     peer_partners = {e["detail"].get("partner") for e in peer_events}
     classmate_events = [e for e in events if e["action"] == "attend"
                         and e["status"] == "completed" and e["detail"].get("classmate")]
@@ -160,6 +206,7 @@ def summarize(run_dir):
                "peer_dialogue_valid_rate": (len(peer_valid) / len(peer_llm)
                                              if peer_llm else None),
                **trajectories,
+               **network,
                "trajectory_unique_peer_partners": len(peer_partners - {None}),
                "class_attendance_interactions": len(classmate_events),
                "study_group_events": len(study_groups),
