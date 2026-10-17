@@ -75,6 +75,26 @@ def test_interaction_network_without_contacts_has_no_edges():
     assert result["interaction_network_daily_change"] == []
 
 
+def test_residence_copresence_records_only_observed_roommate_pairs():
+    events = [event(1, 1, "s000", "rest", detail={
+                  "trigger": "shared_residence_presence_v1",
+                  "context": {"venue": "residence-00"}, "roommates": []}),
+              event(2, 1, "s001", "rest", detail={
+                  "trigger": "shared_residence_presence_v1",
+                  "context": {"venue": "residence-00"}, "roommates": ["s000"]}),
+              event(3, 1, "s003", "rest", detail={
+                  "trigger": "shared_residence_presence_v1",
+                  "context": {"venue": "residence-01"}, "roommates": []})]
+    network = interaction_network_metrics(events)
+    assert network["interaction_network_edges_by_source"]["residence_copresence"] == 1
+    assert network["interaction_network_contacts_by_source"]["residence_copresence"] == 1
+    records = interaction_records(events)
+    assert [record["participants"] for record in records] == [
+        ["s000"], ["s001", "s000"], ["s003"]]
+    assert records[1]["venue"] == "residence-00"
+    assert records[1]["response"] == "not_recorded"
+
+
 def test_support_windows_separate_complete_observation_from_censoring():
     events = [event(1, 1, "s000", "attend"),
               event(2, 2, "s000", "peer", detail={"partner": "s001"}),

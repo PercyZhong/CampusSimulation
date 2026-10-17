@@ -14,6 +14,7 @@ from .domain import (
     next_stress,
     policy_components,
     policy_context,
+    residence_context,
     unit,
 )
 from .language import language_backend
@@ -265,9 +266,11 @@ class Campus:
                                (dumps(partner_state), partner))
             self.remember(state, memory)
             group_detail = None
+            residence_detail = None
             if action == "attend":
                 context = academic_context(self.config.seed, day, actor)
-                ordinal = writer.query("SELECT COALESCE(MAX(ordinal),0)+1 FROM campus_interactions")[0][0]
+                ordinal = writer.query(
+                    "SELECT COALESCE(MAX(ordinal),0)+1 FROM campus_interactions")[0][0]
                 writer.execute("INSERT INTO campus_interactions VALUES(?,?,?,?,?,?)",
                                (ordinal, day, actor, classmate, "class_attendance", dumps(context)))
                 prior = writer.query(
@@ -289,6 +292,20 @@ class Campus:
                     partner_state["connection"] = clamp(partner_state["connection"] + 0.004)
                     writer.execute("UPDATE campus_students SET body=? WHERE id=?",
                                    (dumps(partner_state), classmate))
+            elif action == "rest":
+                residence = residence_context(actor)
+                arrivals = writer.query(
+                    "SELECT actor,context FROM campus_interactions "
+                    "WHERE day=? AND interaction='residence_presence' ORDER BY ordinal", (day,))
+                roommates = [sid for sid, encoded in arrivals
+                             if sid != actor and json.loads(encoded) == residence]
+                ordinal = writer.query(
+                    "SELECT COALESCE(MAX(ordinal),0)+1 FROM campus_interactions")[0][0]
+                writer.execute("INSERT INTO campus_interactions VALUES(?,?,?,?,?,?)",
+                               (ordinal, day, actor, None, "residence_presence",
+                                dumps(residence)))
+                residence_detail = {"context": residence, "roommates": roommates,
+                                    "trigger": "shared_residence_presence_v1"}
             writer.execute("UPDATE campus_students SET body=? WHERE id=?", (dumps(state), actor))
             if action == "peer":
                 feedback = {key: round(state[key] - before[key], 6)
@@ -300,6 +317,8 @@ class Campus:
                             for key in before if state[key] != before[key]}
             if detail is None:
                 detail = {}
+            if residence_detail is not None:
+                detail.update(residence_detail)
             detail["feedback"] = feedback
             self.event(writer, day, actor, action, "completed",
                        detail=detail)

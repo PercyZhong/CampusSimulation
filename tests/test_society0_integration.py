@@ -226,6 +226,35 @@ def test_class_contacts_require_shared_course_and_prior_arrival(tmp_path):
     asyncio.run(exercise())
 
 
+def test_residence_presence_only_lists_prior_roommates(tmp_path):
+    import asyncio
+
+    from society0.kernel.composition import compose
+    from society0.kernel.interaction import InteractionScope, Moment, Ref
+
+    from campus_sim.plan import build
+
+    raw = json.loads(Path("configs/baseline.json").read_text(encoding="utf-8"))
+    raw.update(end=1, n_students=4)
+
+    async def exercise():
+        async with compose(tmp_path / "residence", build(raw).plugins) as host:
+            actions = host.service("interaction", "actions")
+            for actor in ("s000", "s003", "s001"):
+                with InteractionScope(actor, Moment(1, "decide")) as scope:
+                    result = await actions.bound(scope).invoke(
+                        "campus.rest", Ref("campus", "student", actor), {})
+                    assert result.status == "completed"
+            store = host.service("storage", "store")
+            details = store.read(lambda view: [json.loads(row[0]) for row in view.iter_query(
+                "SELECT detail FROM campus_events WHERE action='rest' ORDER BY ordinal")])
+            assert [detail["roommates"] for detail in details] == [[], [], ["s000"]]
+            assert details[2]["context"] == details[0]["context"]
+            assert details[2]["context"] != details[1]["context"]
+
+    asyncio.run(exercise())
+
+
 def test_daily_metrics_expose_emotional_feedback_components(tmp_path):
     import asyncio
     import csv

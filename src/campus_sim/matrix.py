@@ -124,7 +124,8 @@ def build_report(root="runs"):
             group["interaction_network_edges_by_source"] = {
                 source: _stats([row["interaction_network_edges_by_source"][source]
                                 for row in subset])
-                for source in ("peer", "class_contact", "study_group_copresence")}
+                for source in ("peer", "class_contact", "study_group_copresence",
+                               "residence_copresence")}
             group["support_window_metrics"] = {"window_days": 3}
             for key in subset[0]["support_window_metrics"]:
                 if key == "window_days":

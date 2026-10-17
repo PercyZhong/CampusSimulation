@@ -12,6 +12,7 @@ from campus_sim.domain import (
     next_stress,
     policy_components,
     policy_context,
+    residence_context,
     unit,
 )
 from campus_sim.language import language_backend
@@ -72,6 +73,11 @@ def test_academic_context_is_deterministic_and_student_specific():
     assert first == academic_context(11, 2, "s001")
     assert first != academic_context(11, 2, "s005")
     assert first != academic_context(11, 3, "s000")
+
+
+def test_residence_context_groups_roommates():
+    assert residence_context("s000") == residence_context("s002")
+    assert residence_context("s000") != residence_context("s003")
 
 
 def test_sustained_workload_retains_stress_range():

@@ -3,7 +3,7 @@
 import csv
 import itertools
 import json
-from collections import Counter
+from collections import Counter, defaultdict
 from pathlib import Path
 
 from society0.kernel.observation import Observation
@@ -40,6 +40,12 @@ def interaction_records(events):
             records.append({**common, "kind": "study_group_copresence",
                             "participants": detail["participants"],
                             "venue": detail["context"].get("venue"),
+                            "response": "not_recorded", "outcome": "copresent"})
+        elif (action == "rest" and event["status"] == "completed"
+              and detail.get("trigger") == "shared_residence_presence_v1"):
+            records.append({**common, "kind": "residence_presence",
+                            "participants": [event["actor"], *detail["roommates"]],
+                            "venue": detail["context"]["venue"],
                             "response": "not_recorded", "outcome": "copresent"})
         elif action == "accept_support" and event["status"] == "completed":
             records.append({**common, "kind": "service_contact",
@@ -215,7 +221,8 @@ def course_exposure_metrics(events):
 
 def interaction_network_metrics(events):
     """Track observed student pairs by day and interaction source."""
-    sources = ("peer", "class_contact", "study_group_copresence")
+    sources = ("peer", "class_contact", "study_group_copresence",
+               "residence_copresence")
     occurrences = []
     for event in events:
         if event["status"] != "completed":
@@ -230,6 +237,10 @@ def interaction_network_metrics(events):
         elif event["action"] == "study_group":
             pairs = list(itertools.combinations(detail["participants"], 2))
             source = "study_group_copresence"
+        elif (event["action"] == "rest"
+              and detail.get("trigger") == "shared_residence_presence_v1"):
+            pairs = [(event["actor"], sid) for sid in detail["roommates"]]
+            source = "residence_copresence"
         else:
             continue
         for left, right in pairs:
@@ -337,6 +348,17 @@ def summarize(run_dir):
                        or attended[0] >= event["ordinal"]
                        or attended[1] != detail["context"] for sid in participants)):
             raise ValueError("study group lacks three prior same-course arrivals")
+    residence_events = [e for e in events if e["action"] == "rest"
+                        and e["status"] == "completed"
+                        and e["detail"].get("trigger") == "shared_residence_presence_v1"]
+    residence = defaultdict(list)
+    for event in sorted(residence_events, key=lambda item: item["ordinal"]):
+        detail = event["detail"]
+        venue = detail["context"]["venue"]
+        earlier = residence[event["day"], venue]
+        if (event["actor"] in earlier or detail["roommates"] != earlier):
+            raise ValueError("residence copresence lacks prior same-venue arrival")
+        earlier.append(event["actor"])
     recorded_model_calls = sum(
         e["action"] == "model_decision" or
         (e["action"] == "peer" and e["status"] == "completed"
@@ -379,6 +401,7 @@ def summarize(run_dir):
                "trajectory_unique_peer_partners": len(peer_partners - {None}),
                "class_attendance_interactions": len(classmate_events),
                "study_group_events": len(study_groups),
+               "residence_presence_events": len(residence_events),
                "served_total": sum(d["served_today"] for d in days),
                "network_calls": recorded_model_calls,
                "paid_model_calls": recorded_model_calls,

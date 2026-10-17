@@ -173,6 +173,11 @@ def academic_context(seed, day, student_id):
             "section": f"S{cohort:02d}"}
 
 
+def residence_context(student_id):
+    """Stable synthetic three-student residence groups."""
+    return {"venue": f"residence-{int(student_id[1:]) // 3:02d}"}
+
+
 def next_stress(stress, recovery, load, supported):
     """Daily workload and recovery with bounded adaptation to sustained load."""
     return clamp(stress + load - 0.055 * recovery -
