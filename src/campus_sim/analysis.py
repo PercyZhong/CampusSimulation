@@ -1,6 +1,7 @@
 """Export only authoritative facts through Society0's read-only Observation."""
 
 import csv
+import itertools
 import json
 from pathlib import Path
 
@@ -59,7 +60,7 @@ def summarize(run_dir):
     peer_llm = [e for e in peer_events if e["detail"].get("backend") == "llm"]
     peer_valid = [e for e in peer_llm if len(e["detail"].get("turns", [])) == 4]
     trajectory = [e["detail"].get("action") for e in decisions]
-    transitions = sum(left != right for left, right in zip(trajectory, trajectory[1:]))
+    transitions = sum(left != right for left, right in itertools.pairwise(trajectory))
     peer_partners = {e["detail"].get("partner") for e in peer_events}
     classmate_events = [e for e in events if e["action"] == "attend"
                         and e["status"] == "completed" and e["detail"].get("classmate")]
