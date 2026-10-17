@@ -16,6 +16,7 @@ from .domain import (
     peer_response,
     policy_components,
     policy_context,
+    relationship_type,
     residence_context,
     scenario_context,
     unit,
@@ -36,7 +37,8 @@ SCHEMA = (
     ("CREATE TABLE campus_peer_invitations(day INTEGER NOT NULL,actor TEXT NOT NULL,"
      "partner TEXT NOT NULL,response TEXT NOT NULL,PRIMARY KEY(day,actor))"),
     ("CREATE TABLE campus_relationships(a TEXT NOT NULL,b TEXT NOT NULL,strength REAL NOT NULL,"
-     "first_day INTEGER,last_day INTEGER,contacts INTEGER NOT NULL,PRIMARY KEY(a,b))"),
+     "first_day INTEGER,last_day INTEGER,contacts INTEGER NOT NULL,relationship_type TEXT NOT NULL,"
+     "PRIMARY KEY(a,b))"),
     "CREATE TABLE campus_queue(actor TEXT NOT NULL PRIMARY KEY, requested_day INTEGER NOT NULL, ordinal INTEGER NOT NULL UNIQUE)",
     "CREATE TABLE campus_service_usage(day INTEGER PRIMARY KEY, used INTEGER NOT NULL)",
     "CREATE TABLE campus_follow_up_usage(day INTEGER PRIMARY KEY, used INTEGER NOT NULL)",
@@ -178,14 +180,17 @@ class Campus:
             rows = writer.query("SELECT body FROM campus_students WHERE id=?", (partner,),
                                 max_rows=1)
             partner_state = json.loads(rows[0][0])
-            response = peer_response(self.config.seed, day, actor, partner, partner_state)
+            relation = relationship_type(actor, partner)
+            response = peer_response(self.config.seed, day, actor, partner, partner_state, relation)
             writer.execute("INSERT INTO campus_peer_invitations VALUES(?,?,?,?)",
                            (day, actor, partner, response))
-            basis = "partner_state_availability_v1"
+            basis = "partner_state_availability_v2"
             self.event(writer, day, actor, "peer_invitation", "completed",
-                       detail={"partner": partner, "response": response, "basis": basis})
+                       detail={"partner": partner, "response": response, "basis": basis,
+                               "relationship_type": relation})
             self.event(writer, day, partner, "peer_response", response,
-                       detail={"inviter": actor, "partner": partner, "basis": basis})
+                       detail={"inviter": actor, "partner": partner, "basis": basis,
+                               "relationship_type": relation})
             if response != "accepted":
                 self.event(writer, day, actor, "peer", "rejected", response,
                            detail={"partner": partner, "partner_response": response})
@@ -304,18 +309,23 @@ class Campus:
                                             (partner,), max_rows=1)
                 partner_state = json.loads(partner_rows[0][0])
                 left, right = sorted((actor, partner))
-                rel = writer.query("SELECT strength,first_day,last_day,contacts FROM campus_relationships "
+                rel = writer.query("SELECT strength,first_day,last_day,contacts,relationship_type FROM campus_relationships "
                                    "WHERE a=? AND b=?", (left, right))
+                relation = relationship_type(actor, partner)
                 if rel:
-                    strength, first_day, _, contacts = rel[0]
+                    strength, first_day, _, contacts, relation = rel[0]
                     contacts += 1
-                    strength = clamp(strength + 0.08)
+                    strength = clamp(strength + {"roommate": 0.10, "club_member": 0.09,
+                                                 "study_partner": 0.08, "friend": 0.12,
+                                                 "acquaintance": 0.06}.get(relation, 0.06))
                 else:
-                    strength, first_day, contacts = 0.58, day, 1
-                writer.execute("INSERT INTO campus_relationships VALUES(?,?,?,?,?,?) "
-                               "ON CONFLICT(a,b) DO UPDATE SET strength=?,last_day=?,contacts=?",
-                               (left, right, strength, first_day, day, contacts,
-                                strength, day, contacts))
+                    strength, first_day, contacts = {"roommate": 0.66, "club_member": 0.62,
+                                                     "study_partner": 0.60, "friend": 0.70,
+                                                     "acquaintance": 0.54}.get(relation, 0.54), day, 1
+                writer.execute("INSERT INTO campus_relationships VALUES(?,?,?,?,?,?,?) "
+                               "ON CONFLICT(a,b) DO UPDATE SET strength=?,last_day=?,contacts=?,relationship_type=?",
+                               (left, right, strength, first_day, day, contacts, relation,
+                                strength, day, contacts, relation))
                 state["connection"] = clamp(state["connection"] + 0.045)
                 state["mood"] = clamp(state["mood"] + 0.02)
                 state["belonging"] = clamp(state["belonging"] + 0.025)
@@ -374,7 +384,8 @@ class Campus:
                 detail["partner_state_before"] = {
                     key: partner_state[key] for key in ("mood", "connection", "stress")}
                 detail["relationship"] = {"first_day": first_day, "last_day": day,
-                                           "contacts": contacts, "strength": strength}
+                                           "contacts": contacts, "strength": strength,
+                                           "relationship_type": relation}
             memory = {"day": day, "action": action, "status": "completed"}
             if action == "peer":
                 memory["partner"] = partner
@@ -539,10 +550,13 @@ class Campus:
                     "supported": state["supported"]})
                 states.append(state)
             rel_decay = 0
-            for left, right, strength, first_day, last_day, contacts in writer.iter_query(
-                    "SELECT a,b,strength,first_day,last_day,contacts FROM campus_relationships"):
+            for left, right, strength, first_day, last_day, contacts, relationship_type in writer.iter_query(
+                    "SELECT a,b,strength,first_day,last_day,contacts,relationship_type FROM campus_relationships"):
                 if last_day is not None and day > last_day + 1:
-                    updated = clamp(strength - 0.02 * (day - last_day - 1))
+                    decay = {"roommate": 0.012, "club_member": 0.018,
+                             "study_partner": 0.02, "friend": 0.015,
+                             "acquaintance": 0.025}.get(relationship_type, 0.025)
+                    updated = clamp(strength - decay * (day - last_day - 1))
                     if updated != strength:
                         rel_decay += 1
                         writer.execute("UPDATE campus_relationships SET strength=? WHERE a=? AND b=?",
@@ -678,8 +692,8 @@ def campus_plugin(config):
         for a, b in edges:
             writer.execute("INSERT OR IGNORE INTO campus_edges VALUES(?,?)", (a, b))
             left, right = sorted((a, b))
-            writer.execute("INSERT OR IGNORE INTO campus_relationships VALUES(?,?,?,?,?,?)",
-                           (left, right, 0.5, None, None, 0))
+            writer.execute("INSERT OR IGNORE INTO campus_relationships VALUES(?,?,?,?,?,?,?)",
+                           (left, right, 0.5, None, None, 0, relationship_type(a, b)))
     def install(context):
         campus = Campus(context.require("storage", "store"), config)
         information = context.require("interaction", "information")

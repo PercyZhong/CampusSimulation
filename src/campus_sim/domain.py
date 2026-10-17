@@ -201,11 +201,24 @@ def club_context(student_id):
     return {"club_id": f"club-{club:02d}", "venue": f"student_center-{club % 4:02d}"}
 
 
-def peer_response(seed, day, actor, partner, partner_state):
+def relationship_type(actor, partner):
+    """Classify a stable synthetic social tie by shared campus context."""
+    if residence_context(actor)["venue"] == residence_context(partner)["venue"]:
+        return "roommate"
+    if club_context(actor)["club_id"] == club_context(partner)["club_id"]:
+        return "club_member"
+    if academic_context(0, 1, actor)["section"] == academic_context(0, 1, partner)["section"]:
+        return "study_partner"
+    return "acquaintance"
+
+
+def peer_response(seed, day, actor, partner, partner_state, relation="acquaintance"):
     """Return an auditable synthetic partner response before dialogue starts."""
     availability = 1.0 - 0.2 * max(0.0, partner_state.get("stress", 0.5) - 0.65)
     if partner_state.get("pending_day") is not None:
         availability -= 0.2
+    availability += {"roommate": 0.08, "club_member": 0.04,
+                     "study_partner": 0.03, "friend": 0.12}.get(relation, 0)
     draw = unit(seed, "peer_response", day, actor, partner)
     if draw >= clamp(availability):
         return "rejected" if draw < clamp(availability) + 0.08 else "timeout"

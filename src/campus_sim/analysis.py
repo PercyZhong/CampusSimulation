@@ -388,11 +388,13 @@ def summarize(run_dir):
     environment = campus_environment_metrics(events)
     network = interaction_network_metrics(events)
     relationships = Counter()
+    relationship_types = Counter()
     relationship_strengths = []
     for event in peer_events:
         rel = event["detail"].get("relationship") or {}
         if rel:
             relationships["formed" if rel.get("contacts") == 1 else "repeated"] += 1
+            relationship_types[rel.get("relationship_type", "unknown")] += 1
             relationship_strengths.append(rel.get("strength", 0))
     peer_partners = {e["detail"].get("partner") for e in peer_events}
     classmate_events = [e for e in events if e["action"] == "attend"
@@ -492,6 +494,7 @@ def summarize(run_dir):
                                                   if peer_invitations else None),
                "relationship_contacts_formed": relationships["formed"],
                "relationship_repeat_contacts": relationships["repeated"],
+               "relationship_type_counts": dict(relationship_types),
                "relationship_mean_strength": (sum(relationship_strengths) /
                                                len(relationship_strengths)
                                                if relationship_strengths else None),
