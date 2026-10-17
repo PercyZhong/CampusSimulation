@@ -15,6 +15,7 @@ from .domain import (
     next_stress,
     policy_components,
     policy_context,
+    peer_response,
     residence_context,
     unit,
 )
@@ -212,6 +213,20 @@ class Campus:
                 partner = peers[int(unit(self.config.seed, "peer_partner", day, actor) * len(peers))][0]
                 if self.config.driver == "llm" and args.get("partner") != partner:
                     raise ValueError("peer dialogue partner does not match selected partner")
+                partner_rows = writer.query("SELECT body FROM campus_students WHERE id=?",
+                                            (partner,), max_rows=1)
+                partner_state = json.loads(partner_rows[0][0])
+                response = peer_response(self.config.seed, day, actor, partner, partner_state)
+                invitation = {"partner": partner, "response": response,
+                              "basis": "partner_state_availability_v1"}
+                self.event(writer, day, actor, "peer_invitation", "completed", detail=invitation)
+                self.event(writer, day, partner, "peer_response", response, detail={
+                    "inviter": actor, "partner": partner,
+                    "basis": "partner_state_availability_v1"})
+                if response != "accepted":
+                    self.event(writer, day, actor, "peer", "rejected", response,
+                               detail={"partner": partner, "partner_response": response})
+                    return {"status": "rejected", "reason": response}
                 state["connection"] = clamp(state["connection"] + 0.045)
                 state["mood"] = clamp(state["mood"] + 0.02)
             elif action == "attend":
@@ -222,8 +237,6 @@ class Campus:
                 return {"status": "rejected", "reason": reason}
             writer.execute("UPDATE campus_students SET body=? WHERE id=?", (dumps(state), actor))
             if action == "peer":
-                partner_rows = writer.query("SELECT body FROM campus_students WHERE id=?", (partner,), max_rows=1)
-                partner_state = json.loads(partner_rows[0][0])
                 partner_state["connection"] = clamp(partner_state["connection"] + 0.02)
                 partner_state["mood"] = clamp(partner_state["mood"] + 0.01)
                 writer.execute("UPDATE campus_students SET body=? WHERE id=?",

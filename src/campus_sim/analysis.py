@@ -31,6 +31,16 @@ def interaction_records(events):
             records.append({**common, "kind": "peer_dialogue",
                             "participants": [event["actor"]], "venue": None,
                             "response": "unavailable", "outcome": event.get("reason")})
+        elif action == "peer_invitation" and event["status"] == "completed":
+            records.append({**common, "kind": "peer_invitation",
+                            "participants": [event["actor"], detail["partner"]],
+                            "venue": None, "response": detail.get("response"),
+                            "outcome": "invited"})
+        elif action == "peer_response":
+            records.append({**common, "kind": "peer_response",
+                            "participants": [detail.get("inviter"), event["actor"]],
+                            "venue": None, "response": event["status"],
+                            "outcome": "responded"})
         elif action == "attend" and event["status"] == "completed":
             context = detail.get("context") or {}
             records.append({**common, "kind": "class_attendance",
@@ -325,6 +335,10 @@ def summarize(run_dir):
     selection_rates = {name: count / len(decisions) if decisions else None
                        for name, count in selection_counts.items()}
     peer_events = [e for e in events if e["action"] == "peer" and e["status"] == "completed"]
+    peer_invitations = [e for e in events if e["action"] == "peer_invitation"
+                        and e["status"] == "completed"]
+    peer_responses = [e for e in events if e["action"] == "peer_response"]
+    accepted_responses = sum(e["status"] == "accepted" for e in peer_responses)
     peer_llm = [e for e in peer_events if e["detail"].get("backend") == "llm"]
     peer_valid = [e for e in peer_llm if len(e["detail"].get("turns", [])) == 4]
     trajectories = trajectory_metrics(events)
@@ -422,6 +436,12 @@ def summarize(run_dir):
                "peer_dialogue_valid_count": len(peer_valid),
                "peer_dialogue_valid_rate": (len(peer_valid) / len(peer_llm)
                                              if peer_llm else None),
+               "peer_invitation_count": len(peer_invitations),
+               "peer_response_counts": dict(Counter(e["status"] for e in peer_responses)),
+               "peer_acceptance_rate": (accepted_responses / len(peer_responses)
+                                        if peer_responses else None),
+               "peer_dialogue_completion_rate": (len(peer_events) / len(peer_invitations)
+                                                  if peer_invitations else None),
                **trajectories,
                "support_window_metrics": support_windows,
                "support_recovery_metrics": recovery,

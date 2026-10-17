@@ -14,7 +14,14 @@ from campus_sim.domain import (
     policy_context,
     residence_context,
     unit,
+    peer_response,
 )
+
+
+def test_peer_response_is_deterministic_and_auditable():
+    first = peer_response(11, 1, "s000", "s001", {"stress": 0.3})
+    assert first in {"accepted", "rejected", "timeout"}
+    assert first == peer_response(11, 1, "s000", "s001", {"stress": 0.3})
 from campus_sim.language import language_backend
 from campus_sim.population import make_population, make_staff
 

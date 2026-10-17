@@ -184,6 +184,17 @@ def club_context(student_id):
     return {"club_id": f"club-{club:02d}", "venue": f"student_center-{club % 4:02d}"}
 
 
+def peer_response(seed, day, actor, partner, partner_state):
+    """Return an auditable synthetic partner response before dialogue starts."""
+    availability = 0.88 - 0.18 * partner_state.get("stress", 0.5)
+    if partner_state.get("pending_day") is not None:
+        availability -= 0.12
+    draw = unit(seed, "peer_response", day, actor, partner)
+    if draw >= clamp(availability):
+        return "rejected" if draw < clamp(availability) + 0.08 else "timeout"
+    return "accepted"
+
+
 def next_stress(stress, recovery, load, supported):
     """Daily workload and recovery with bounded adaptation to sustained load."""
     return clamp(stress + load - 0.055 * recovery -
