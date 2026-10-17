@@ -43,12 +43,14 @@ def interaction_records(events):
                             "response": "not_recorded", "outcome": "copresent"})
         elif action == "accept_support" and event["status"] == "completed":
             records.append({**common, "kind": "service_contact",
-                            "participants": [event["actor"], "service:main"],
+                            "participants": [event["actor"],
+                                             detail.get("staff_id") or "service:main"],
                             "venue": None, "response": "service_delivered",
                             "outcome": "completed"})
         elif action == "staff_follow_up" and event["status"] == "completed":
             records.append({**common, "kind": "service_follow_up",
-                            "participants": ["service:main", event["actor"]],
+                            "participants": [detail.get("staff_id") or "service:main",
+                                             event["actor"]],
                             "venue": None, "response": "not_recorded",
                             "outcome": "completed"})
     return records

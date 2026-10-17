@@ -176,8 +176,10 @@ def test_interaction_records_separate_dialogue_copresence_and_service():
               event(4, 1, "s002", "study_group", detail={
                   "participants": ["s000", "s001", "s002"],
                   "context": {"venue": "building-1"}}),
-              event(5, 2, "s001", "accept_support"),
-              event(6, 3, "s001", "staff_follow_up"),
+              event(5, 2, "s001", "accept_support",
+                    detail={"staff_id": "c000"}),
+              event(6, 3, "s001", "staff_follow_up",
+                    detail={"staff_id": "c000"}),
               event(7, 3, "s001", "student_state")]
     events[1]["reason"] = "no_peer_edge"
     records = interaction_records(events)
@@ -189,5 +191,11 @@ def test_interaction_records_separate_dialogue_copresence_and_service():
     assert records[2]["venue"] == "building-1"
     assert records[2]["response"] == "not_recorded"
     assert records[3]["outcome"] == "copresent"
-    assert records[4]["participants"] == ["s001", "service:main"]
+    assert records[4]["participants"] == ["s001", "c000"]
+    assert records[5]["participants"] == ["c000", "s001"]
     assert records[5]["response"] == "not_recorded"
+
+
+def test_interaction_records_preserve_legacy_service_endpoint():
+    records = interaction_records([event(1, 1, "s000", "accept_support")])
+    assert records[0]["participants"] == ["s000", "service:main"]

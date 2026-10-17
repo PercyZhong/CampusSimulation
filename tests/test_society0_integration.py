@@ -275,6 +275,10 @@ def test_follow_up_component_records_once_and_updates_student(tmp_path):
                 accepted = await actions.bound(scope).invoke(
                     "campus.accept_support", Ref("campus", "student", "s000"), {})
                 assert accepted.status == "completed"
+            service_detail = host.service("storage", "store").read(lambda view: json.loads(
+                view.query("SELECT detail FROM campus_events WHERE action='accept_support'",
+                           max_rows=1)[0][0]))
+            assert service_detail["staff_id"] == "c000"
             campus = host.service("campus", "campus")
             store = host.service("storage", "store")
             store.transaction(lambda writer: writer.execute(
@@ -299,6 +303,10 @@ def test_follow_up_component_records_once_and_updates_student(tmp_path):
             events = store.read(lambda view: view.query(
                 "SELECT day,action FROM campus_events WHERE action='staff_follow_up'"))
             assert events == [(5, "staff_follow_up")]
+            follow_detail = store.read(lambda view: json.loads(view.query(
+                "SELECT detail FROM campus_events WHERE action='staff_follow_up'",
+                max_rows=1)[0][0]))
+            assert follow_detail["staff_id"] == "c000"
             state = store.read(lambda view: json.loads(view.query(
                 "SELECT body FROM campus_students WHERE id='s000'", max_rows=1)[0][0]))
             assert state["follow_up_sent"] is True
@@ -352,6 +360,44 @@ def test_follow_up_capacity_prioritizes_earliest_support(tmp_path):
             assert store.read(lambda view: view.query(
                 "SELECT actor,day FROM campus_events WHERE action='staff_follow_up' ORDER BY day")) == [
                     ("s000", 4), ("s001", 5)]
+
+    asyncio.run(exercise())
+
+
+def test_staff_assignments_respect_individual_shift_slots(tmp_path):
+    import asyncio
+
+    from society0.kernel.composition import compose
+    from society0.kernel.interaction import InteractionScope, Moment, Ref
+
+    from campus_sim.plan import build
+
+    raw = json.loads(Path("configs/baseline.json").read_text(encoding="utf-8"))
+    raw.update(end=2, n_students=4, capacity=4)
+    raw["policy_components"] = {
+        **raw["policy_components"], "service": {"capacity": 4, "open_every": 1}}
+
+    async def exercise():
+        async with compose(tmp_path / "staff-assignment", build(raw).plugins) as host:
+            actions = host.service("interaction", "actions")
+            for actor in ("s000", "s001", "s002", "s003"):
+                with InteractionScope(actor, Moment(1, "decide")) as scope:
+                    assert (await actions.bound(scope).invoke(
+                        "campus.request", Ref("campus", "student", actor), {})).status == "completed"
+            for actor in ("c000", "c001"):
+                with InteractionScope(actor, Moment(2, "staff_shift")) as scope:
+                    assert (await actions.bound(scope).invoke(
+                        "campus.staff_shift", Ref("campus", "staff", actor), {})).status == "completed"
+            for actor in ("s000", "s001", "s002", "s003"):
+                with InteractionScope(actor, Moment(2, "decide")) as scope:
+                    assert (await actions.bound(scope).invoke(
+                        "campus.accept_support", Ref("campus", "student", actor), {}
+                    )).status == "completed"
+            store = host.service("storage", "store")
+            details = store.read(lambda view: [json.loads(row[0]) for row in view.iter_query(
+                "SELECT detail FROM campus_events WHERE action='accept_support' ORDER BY ordinal")])
+            assert [detail["staff_id"] for detail in details] == [
+                "c000", "c000", "c000", "c001"]
 
     asyncio.run(exercise())
 

@@ -74,6 +74,20 @@ class Campus:
         rows = view.query("SELECT used FROM campus_follow_up_usage WHERE day=?", (day,))
         return rows[0][0] if rows else 0
 
+    @staticmethod
+    def next_staff(view, day):
+        """Select an on-shift staff member with an unused individual slot."""
+        shifts = view.query(
+            "SELECT actor,slots FROM campus_staff_shifts WHERE day=? ORDER BY actor", (day,))
+        usage = {actor: 0 for actor, _ in shifts}
+        for detail, in view.iter_query(
+                "SELECT detail FROM campus_events WHERE day=? AND status='completed' "
+                "AND action IN ('accept_support','staff_follow_up') ORDER BY ordinal", (day,)):
+            staff_id = json.loads(detail).get("staff_id")
+            if staff_id in usage:
+                usage[staff_id] += 1
+        return next((actor for actor, slots in shifts if usage[actor] < slots), None)
+
     def staff_shift(self, scope, target):
         day, actor = scope.moment.time, scope.actor
         if target.key != actor:
@@ -152,6 +166,7 @@ class Campus:
             if action == "accept_support":
                 first = writer.query("SELECT actor FROM campus_queue ORDER BY requested_day,ordinal LIMIT 1")
                 used = writer.query("SELECT used FROM campus_service_usage WHERE day=?", (day,))
+                assigned_staff = self.next_staff(writer, day)
                 if state["pending_day"] is None:
                     reason = "no_pending_request"
                 elif day % open_every != 0:
@@ -160,6 +175,8 @@ class Campus:
                     reason = "queue_turn"
                 elif ((used[0][0] if used else 0) + self.follow_up_slots_used(writer, day)
                       >= self.available_slots(writer, day)):
+                    reason = "capacity_full"
+                elif assigned_staff is None:
                     reason = "capacity_full"
             if action == "peer":
                 peers = writer.query(
@@ -221,7 +238,8 @@ class Campus:
                 if classmates:
                     classmate = classmates[int(unit(self.config.seed, "classmate", day, actor)
                                               * len(classmates))]
-            detail = ({"wait_days": wait} if action == "accept_support" else
+            detail = ({"wait_days": wait, "staff_id": assigned_staff}
+                      if action == "accept_support" else
                       {"partner": partner,
                        "turns": turns if self.config.driver == "llm" else
                            self.language.peer_dialogue(
@@ -314,6 +332,9 @@ class Campus:
                 for _, sid, state in sorted(candidates):
                     if served + follow_used >= available:
                         break
+                    assigned_staff = self.next_staff(writer, day)
+                    if assigned_staff is None:
+                        break
                     state["follow_up_sent"] = True
                     state["stress"] = clamp(state["stress"] - 0.04)
                     state["mood"] = clamp(state["mood"] + 0.03)
@@ -322,7 +343,8 @@ class Campus:
                     follow_used += 1
                     self.event(writer, day, sid, "staff_follow_up", "completed",
                                detail={"days_after_support": follow_up["days_after_support"],
-                                       "service_slot": served + follow_used})
+                                       "service_slot": served + follow_used,
+                                       "staff_id": assigned_staff})
                 if follow_used != self.follow_up_slots_used(writer, day):
                     writer.execute("INSERT INTO campus_follow_up_usage VALUES(?,?) ON CONFLICT(day) DO UPDATE SET used=?",
                                    (day, follow_used, follow_used))
