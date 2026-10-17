@@ -1,0 +1,21 @@
+﻿{
+  "protocol_id": "v070-trajectory-matrix-v1",
+  "behavior_git": "1d4a20e2d54204ecd1b957d3315edd29121f7bbe",
+  "days": 10,
+  "n_students": 40,
+  "n_staff": 2,
+  "seeds": [11, 22, 33],
+  "conditions": ["baseline", "outreach", "easier_access", "targeted_outreach"],
+  "drivers": {
+    "rule": {"provider": null, "model": null, "temperature": null, "max_model_calls": 0},
+    "qwen": {"provider": "qwen", "model": "qwen-plus", "temperature": 0.2, "max_model_calls": 900},
+    "deepseek": {"provider": "deepseek", "model": "deepseek-chat", "temperature": 0.2, "max_model_calls": 900}
+  },
+  "primary_driver": "rule",
+  "output_pattern": "v070-matrix-{driver}-{condition}-seed{seed}-10d",
+  "trajectory_window_days": 7,
+  "primary_metrics": ["requested_rate", "supported_rate", "low_connection_7d_rate", "mean_stress", "mean_mood", "no_contact_despite_opportunity_rate"],
+  "secondary_metrics": ["trajectory_type_counts", "isolation_status_counts", "action_counts", "network_calls", "completed_wait_mean_days"],
+  "comparison": "Within driver and seed, condition minus baseline. Report three-seed mean and sample standard deviation; descriptive only."
+}
+

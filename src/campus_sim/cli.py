@@ -60,6 +60,14 @@ def main(argv=None):
     matrix_report_v069.add_argument("--root", default="runs")
     matrix_report_v069.add_argument("--driver", choices=("rule", "qwen", "deepseek"),
                                     default="rule")
+    matrix_run_v070 = sub.add_parser("matrix-run-v070")
+    matrix_run_v070.add_argument("--root", default="runs")
+    matrix_run_v070.add_argument("--driver", choices=("rule", "qwen", "deepseek"),
+                                 default="rule")
+    matrix_report_v070 = sub.add_parser("matrix-report-v070")
+    matrix_report_v070.add_argument("--root", default="runs")
+    matrix_report_v070.add_argument("--driver", choices=("rule", "qwen", "deepseek"),
+                                    default="rule")
     web = sub.add_parser("web")
     web.add_argument("--output", default="runs/workbench")
     web.add_argument("--port", type=int, default=8765)
@@ -95,6 +103,20 @@ def main(argv=None):
         from .matrix_v069 import build_report
         report = build_report(args.root, args.driver)
         output = Path(args.root) / f"v069-matrix-{args.driver}-report.json"
+        output.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n",
+                          encoding="utf-8")
+        print(json.dumps({"driver": args.driver, "runs": report["found_runs"],
+                          "report": str(output)}, ensure_ascii=False))
+        return 0
+    if args.command == "matrix-run-v070":
+        from .matrix_v070 import run_matrix
+        completed = run_matrix(args.root, args.driver)
+        print(json.dumps({"driver": args.driver, "runs": len(completed)}, ensure_ascii=False))
+        return 0
+    if args.command == "matrix-report-v070":
+        from .matrix_v070 import build_report
+        report = build_report(args.root, args.driver)
+        output = Path(args.root) / f"v070-matrix-{args.driver}-report.json"
         output.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n",
                           encoding="utf-8")
         print(json.dumps({"driver": args.driver, "runs": report["found_runs"],
