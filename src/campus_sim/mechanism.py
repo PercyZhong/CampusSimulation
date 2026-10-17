@@ -443,7 +443,7 @@ class Campus:
             rel_decay = 0
             for left, right, strength, first_day, last_day, contacts in writer.iter_query(
                     "SELECT a,b,strength,first_day,last_day,contacts FROM campus_relationships"):
-                if day > last_day + 1:
+                if last_day is not None and day > last_day + 1:
                     updated = clamp(strength - 0.02 * (day - last_day - 1))
                     if updated != strength:
                         rel_decay += 1
