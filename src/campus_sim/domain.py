@@ -178,6 +178,12 @@ def residence_context(student_id):
     return {"venue": f"residence-{int(student_id[1:]) // 3:02d}"}
 
 
+def club_context(student_id):
+    """Stable synthetic student club membership and meeting place."""
+    club = int(student_id[1:]) // 5
+    return {"club_id": f"club-{club:02d}", "venue": f"student_center-{club % 4:02d}"}
+
+
 def next_stress(stress, recovery, load, supported):
     """Daily workload and recovery with bounded adaptation to sustained load."""
     return clamp(stress + load - 0.055 * recovery -

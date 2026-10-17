@@ -9,6 +9,7 @@ from .domain import (
     academic_context,
     academic_event,
     clamp,
+    club_context,
     memory_context,
     next_mood,
     next_stress,
@@ -267,8 +268,10 @@ class Campus:
             self.remember(state, memory)
             group_detail = None
             residence_detail = None
+            club_detail = None
             if action == "attend":
                 context = academic_context(self.config.seed, day, actor)
+                club = club_context(actor)
                 ordinal = writer.query(
                     "SELECT COALESCE(MAX(ordinal),0)+1 FROM campus_interactions")[0][0]
                 writer.execute("INSERT INTO campus_interactions VALUES(?,?,?,?,?,?)",
@@ -292,6 +295,19 @@ class Campus:
                     partner_state["connection"] = clamp(partner_state["connection"] + 0.004)
                     writer.execute("UPDATE campus_students SET body=? WHERE id=?",
                                    (dumps(partner_state), classmate))
+                club_arrivals = writer.query(
+                    "SELECT actor,context FROM campus_interactions "
+                    "WHERE day=? AND interaction='club_presence' ORDER BY ordinal", (day,))
+                clubmates = [sid for sid, encoded in club_arrivals
+                             if sid != actor and json.loads(encoded) == club]
+                if clubmates:
+                    participants = [*clubmates, actor]
+                    club_detail = {"participants": participants, "context": club,
+                                   "trigger": "same_club_prior_attendance_v1"}
+                ordinal = writer.query(
+                    "SELECT COALESCE(MAX(ordinal),0)+1 FROM campus_interactions")[0][0]
+                writer.execute("INSERT INTO campus_interactions VALUES(?,?,?,?,?,?)",
+                               (ordinal, day, actor, None, "club_presence", dumps(club)))
             elif action == "rest":
                 residence = residence_context(actor)
                 arrivals = writer.query(
@@ -319,12 +335,17 @@ class Campus:
                 detail = {}
             if residence_detail is not None:
                 detail.update(residence_detail)
+            if action == "attend":
+                detail["club_context"] = club_context(actor)
             detail["feedback"] = feedback
             self.event(writer, day, actor, action, "completed",
                        detail=detail)
             if group_detail is not None:
                 self.event(writer, day, actor, "study_group", "completed",
                            detail=group_detail)
+            if club_detail is not None:
+                self.event(writer, day, actor, "club_copresence", "completed",
+                           detail=club_detail)
             return {"status": "completed", "action": action}
         result = self.store.transaction(write)
         return ActionResult(result["status"], result)

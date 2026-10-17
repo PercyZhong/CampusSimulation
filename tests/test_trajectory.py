@@ -62,10 +62,10 @@ def test_interaction_network_tracks_new_edges_and_repeated_contacts():
     assert result["interaction_network_unique_edges"] == 3
     assert result["interaction_network_edges_by_source"] == {
         "peer": 1, "class_contact": 1, "study_group_copresence": 3,
-        "residence_copresence": 0}
+        "residence_copresence": 0, "club_copresence": 0}
     assert result["interaction_network_contacts_by_source"] == {
         "peer": 1, "class_contact": 1, "study_group_copresence": 3,
-        "residence_copresence": 0}
+        "residence_copresence": 0, "club_copresence": 0}
     assert result["interaction_network_daily_change"] == [
         {"day": 1, "contacts": 4, "new_edges": 3, "repeat_contacts": 1},
         {"day": 2, "contacts": 1, "new_edges": 0, "repeat_contacts": 1}]
@@ -95,6 +95,22 @@ def test_residence_copresence_records_only_observed_roommate_pairs():
         ["s000"], ["s001", "s000"], ["s003"]]
     assert records[1]["venue"] == "residence-00"
     assert records[1]["response"] == "not_recorded"
+
+
+def test_club_copresence_records_prior_same_club_arrivals():
+    events = [event(1, 1, "s000", "attend", detail={
+                  "club_context": {"club_id": "club-00", "venue": "student_center-00"}}),
+              event(2, 1, "s001", "attend", detail={
+                  "club_context": {"club_id": "club-00", "venue": "student_center-00"}}),
+              event(3, 1, "s001", "club_copresence", detail={
+                  "participants": ["s000", "s001"],
+                  "context": {"club_id": "club-00", "venue": "student_center-00"},
+                  "trigger": "same_club_prior_attendance_v1"})]
+    network = interaction_network_metrics(events)
+    assert network["interaction_network_edges_by_source"]["club_copresence"] == 1
+    records = interaction_records(events)
+    assert records[-1]["kind"] == "club_copresence"
+    assert records[-1]["response"] == "not_recorded"
 
 
 def test_support_windows_separate_complete_observation_from_censoring():

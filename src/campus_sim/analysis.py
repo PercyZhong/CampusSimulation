@@ -41,6 +41,11 @@ def interaction_records(events):
                             "participants": detail["participants"],
                             "venue": detail["context"].get("venue"),
                             "response": "not_recorded", "outcome": "copresent"})
+        elif action == "club_copresence" and event["status"] == "completed":
+            records.append({**common, "kind": "club_copresence",
+                            "participants": detail["participants"],
+                            "venue": detail["context"].get("venue"),
+                            "response": "not_recorded", "outcome": "copresent"})
         elif (action == "rest" and event["status"] == "completed"
               and detail.get("trigger") == "shared_residence_presence_v1"):
             records.append({**common, "kind": "residence_presence",
@@ -222,7 +227,7 @@ def course_exposure_metrics(events):
 def interaction_network_metrics(events):
     """Track observed student pairs by day and interaction source."""
     sources = ("peer", "class_contact", "study_group_copresence",
-               "residence_copresence")
+               "residence_copresence", "club_copresence")
     occurrences = []
     for event in events:
         if event["status"] != "completed":
@@ -237,6 +242,9 @@ def interaction_network_metrics(events):
         elif event["action"] == "study_group":
             pairs = list(itertools.combinations(detail["participants"], 2))
             source = "study_group_copresence"
+        elif event["action"] == "club_copresence":
+            pairs = list(itertools.combinations(detail["participants"], 2))
+            source = "club_copresence"
         elif (event["action"] == "rest"
               and detail.get("trigger") == "shared_residence_presence_v1"):
             pairs = [(event["actor"], sid) for sid in detail["roommates"]]
@@ -359,6 +367,25 @@ def summarize(run_dir):
         if (event["actor"] in earlier or detail["roommates"] != earlier):
             raise ValueError("residence copresence lacks prior same-venue arrival")
         earlier.append(event["actor"])
+    club_events = [e for e in events if e["action"] == "club_copresence"
+                   and e["status"] == "completed"]
+    club_attendance = {}
+    for event in events:
+        if event["action"] == "attend" and event["status"] == "completed":
+            context = event["detail"].get("club_context")
+            if context:
+                club_attendance[event["day"], event["actor"]] = (
+                    event["ordinal"], context)
+    for event in sorted(club_events, key=lambda item: item["ordinal"]):
+        detail = event["detail"]
+        context = detail["context"]
+        participants = detail["participants"]
+        if (len(participants) < 2 or participants[-1] != event["actor"]
+                or detail.get("trigger") != "same_club_prior_attendance_v1"
+                or any((arrival := club_attendance.get((event["day"], sid))) is None
+                       or arrival[0] >= event["ordinal"] or arrival[1] != context
+                       for sid in participants)):
+            raise ValueError("club copresence lacks prior same-club arrival")
     recorded_model_calls = sum(
         e["action"] == "model_decision" or
         (e["action"] == "peer" and e["status"] == "completed"
@@ -402,6 +429,7 @@ def summarize(run_dir):
                "class_attendance_interactions": len(classmate_events),
                "study_group_events": len(study_groups),
                "residence_presence_events": len(residence_events),
+               "club_copresence_events": len(club_events),
                "served_total": sum(d["served_today"] for d in days),
                "network_calls": recorded_model_calls,
                "paid_model_calls": recorded_model_calls,
