@@ -12,19 +12,23 @@ SCHEMA_VERSION = 1
 ACTION_NAMES = ("attend", "rest", "peer", "request", "accept_support")
 
 
-def trajectory_metrics(events):
-    """Count each student's selected-action path and completed peer relationships."""
+def selected_actions(events):
+    """Use LLM decisions when present, otherwise student action attempts."""
     decisions = [event for event in events if event["action"] == "model_decision"
                  and event["status"] == "completed"]
     source = decisions if decisions else [event for event in events
                                          if event["action"] in ACTION_NAMES
                                          and event["status"] in {"completed", "rejected"}]
+    return [(event["actor"], event["day"], event["ordinal"], action)
+            for event in source
+            if (action := event["detail"].get("action", event["action"])) in ACTION_NAMES]
+
+
+def trajectory_metrics(events):
+    """Count each student's selected-action path and completed peer relationships."""
     by_actor = {}
-    for event in source:
-        action = event["detail"].get("action", event["action"])
-        if action in ACTION_NAMES:
-            by_actor.setdefault(event["actor"], []).append(
-                (event["day"], event["ordinal"], action))
+    for actor, day, ordinal, action in selected_actions(events):
+        by_actor.setdefault(actor, []).append((day, ordinal, action))
     transitions = Counter()
     longest_streak = 0
     for items in by_actor.values():
@@ -48,6 +52,40 @@ def trajectory_metrics(events):
             "peer_repeat_contacts": repeat_contacts,
             "peer_repeat_contact_rate": (repeat_contacts / sum(peer_pairs.values())
                                          if peer_pairs else None)}
+
+
+def support_window_metrics(events, complete_step, width=3):
+    """Describe selected actions around first completed request and support events."""
+    paths = {}
+    for actor, day, _, action in selected_actions(events):
+        paths.setdefault(actor, []).append((day, action))
+    anchors = {}
+    for event in sorted(events, key=lambda item: item["ordinal"]):
+        if event["status"] == "completed" and event["action"] in {
+                "request", "accept_support"}:
+            anchors.setdefault(event["action"], {}).setdefault(event["actor"], event["day"])
+    result = {"window_days": width}
+    for action, windows in (("request", ("before", "after")),
+                            ("accept_support", ("after",))):
+        anchor_days = anchors.get(action, {})
+        prefix = "request" if action == "request" else "support"
+        for window in windows:
+            counts = {name: 0 for name in ACTION_NAMES}
+            eligible = 0
+            for actor, day in anchor_days.items():
+                if window == "before" and day - width < 1:
+                    continue
+                if window == "after" and day + width > complete_step:
+                    continue
+                eligible += 1
+                for selected_day, chosen in paths.get(actor, []):
+                    if (day - width <= selected_day < day if window == "before"
+                            else day < selected_day <= day + width):
+                        counts[chosen] += 1
+            result[f"{prefix}_{window}_eligible_students"] = eligible
+            result[f"{prefix}_{window}_censored_students"] = len(anchor_days) - eligible
+            result[f"{prefix}_{window}_action_counts"] = counts
+    return result
 
 
 def interaction_network_metrics(events):
@@ -144,6 +182,7 @@ def summarize(run_dir):
     peer_llm = [e for e in peer_events if e["detail"].get("backend") == "llm"]
     peer_valid = [e for e in peer_llm if len(e["detail"].get("turns", [])) == 4]
     trajectories = trajectory_metrics(events)
+    support_windows = support_window_metrics(events, status["complete"]["step"])
     network = interaction_network_metrics(events)
     peer_partners = {e["detail"].get("partner") for e in peer_events}
     classmate_events = [e for e in events if e["action"] == "attend"
@@ -206,6 +245,7 @@ def summarize(run_dir):
                "peer_dialogue_valid_rate": (len(peer_valid) / len(peer_llm)
                                              if peer_llm else None),
                **trajectories,
+               "support_window_metrics": support_windows,
                **network,
                "trajectory_unique_peer_partners": len(peer_partners - {None}),
                "class_attendance_interactions": len(classmate_events),

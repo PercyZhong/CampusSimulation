@@ -5,7 +5,12 @@ import re
 import statistics
 from pathlib import Path
 
-from .analysis import ACTION_NAMES, interaction_network_metrics, trajectory_metrics
+from .analysis import (
+    ACTION_NAMES,
+    interaction_network_metrics,
+    support_window_metrics,
+    trajectory_metrics,
+)
 
 PATTERN = re.compile(
     r"^v063-matrix-(rule|qwen|deepseek)-(baseline|outreach|easier_access)-seed(11|22|33)-10d$"
@@ -47,6 +52,7 @@ def _row(path):
     valid_peers = [event for event in llm_peers
                    if len(event["detail"].get("turns", [])) == 4]
     trajectories = trajectory_metrics(events)
+    support_windows = support_window_metrics(events, summary["complete_steps"])
     network = interaction_network_metrics(events)
     row = {"run": path.name, "driver": driver, "condition": condition, "seed": seed,
            "model_provider": summary.get("model_provider"), "model_id": summary.get("model_id"),
@@ -63,6 +69,7 @@ def _row(path):
            "peer_repeat_contacts": trajectories["peer_repeat_contacts"],
            "peer_repeat_contact_rate": trajectories["peer_repeat_contact_rate"],
            "trajectory_transition_matrix": trajectories["trajectory_transition_matrix"],
+           "support_window_metrics": support_windows,
            "interaction_network_unique_edges": network["interaction_network_unique_edges"],
            "interaction_network_edges_by_source": network[
                "interaction_network_edges_by_source"],
@@ -112,6 +119,17 @@ def build_report(root="runs"):
                 source: _stats([row["interaction_network_edges_by_source"][source]
                                 for row in subset])
                 for source in ("peer", "class_contact", "study_group_copresence")}
+            group["support_window_metrics"] = {"window_days": 3}
+            for key in subset[0]["support_window_metrics"]:
+                if key == "window_days":
+                    continue
+                if key.endswith("_action_counts"):
+                    group["support_window_metrics"][key] = {
+                        name: sum(row["support_window_metrics"][key][name]
+                                  for row in subset) for name in ACTION_NAMES}
+                else:
+                    group["support_window_metrics"][key] = sum(
+                        row["support_window_metrics"][key] for row in subset)
             by_group[f"{driver}:{condition}"] = group
     paired = []
     for driver in DRIVERS:

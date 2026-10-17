@@ -1,6 +1,11 @@
 """Trajectory counts use each student's events in order, including rejected choices."""
 
-from campus_sim.analysis import ACTION_NAMES, interaction_network_metrics, trajectory_metrics
+from campus_sim.analysis import (
+    ACTION_NAMES,
+    interaction_network_metrics,
+    support_window_metrics,
+    trajectory_metrics,
+)
 
 
 def event(ordinal, day, actor, action, status="completed", detail=None):
@@ -65,3 +70,35 @@ def test_interaction_network_without_contacts_has_no_edges():
     result = interaction_network_metrics([event(1, 1, "s000", "rest")])
     assert result["interaction_network_unique_edges"] == 0
     assert result["interaction_network_daily_change"] == []
+
+
+def test_support_windows_separate_complete_observation_from_censoring():
+    events = [event(1, 1, "s000", "attend"),
+              event(2, 2, "s000", "peer", detail={"partner": "s001"}),
+              event(3, 3, "s000", "rest"),
+              event(4, 4, "s000", "request"),
+              event(5, 4, "s001", "request"),
+              event(6, 5, "s000", "accept_support"),
+              event(7, 6, "s000", "attend"),
+              event(8, 7, "s000", "peer", detail={"partner": "s001"}),
+              event(9, 8, "s000", "rest"),
+              event(10, 9, "s001", "accept_support")]
+    result = support_window_metrics(events, complete_step=9)
+    assert result["window_days"] == 3
+    assert result["request_before_eligible_students"] == 2
+    assert result["request_before_action_counts"]["peer"] == 1
+    assert result["request_after_eligible_students"] == 2
+    assert result["request_after_action_counts"]["accept_support"] == 1
+    assert result["support_after_eligible_students"] == 1
+    assert result["support_after_action_counts"] == {
+        "attend": 1, "rest": 1, "peer": 1, "request": 0, "accept_support": 0}
+    assert result["support_after_censored_students"] == 1
+
+
+def test_support_windows_use_llm_decisions_for_rejected_choices():
+    events = [event(1, 1, "s000", "request"),
+              event(2, 2, "s000", "model_decision", detail={"action": "accept_support"}),
+              event(3, 2, "s000", "accept_support", "rejected")]
+    result = support_window_metrics(events, complete_step=4, width=1)
+    assert result["request_after_action_counts"]["accept_support"] == 1
+    assert result["support_after_eligible_students"] == 0
