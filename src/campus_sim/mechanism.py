@@ -736,7 +736,8 @@ class CampusInformation:
                                                   "academic_engagement", "self_efficacy", "belonging",
                                                   "help_seeking_belief", "social_avoidance",
                                                   "missed_course_streak",
-                                                  "supported", "pending_day", "outreach_seen", "recent_events",
+                                                  "supported", "pending_day", "outreach_seen",
+                                                  "initial_group", "recent_events",
                                                   "social_memory", "long_term_memory",
                                                   "supported_day", "follow_up_sent")}
             data["memory_context"] = {

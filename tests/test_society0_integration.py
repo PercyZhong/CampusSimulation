@@ -136,7 +136,9 @@ def test_actor_visibility_and_action_rechecks(tmp_path):
                 assert other_shift.status == "rejected"
             with InteractionScope("s000", Moment(1, "decide")) as scope:
                 own = await information.bound(scope).read("/students/s000")
-                assert json.loads(own.data)["id"] == "s000"
+                own_state = json.loads(own.data)
+                assert own_state["id"] == "s000"
+                assert own_state["initial_group"] in {"lower", "higher"}
                 with pytest.raises(Unavailable):
                     await information.bound(scope).read("/students/s001")
                 with pytest.raises(Unavailable):
