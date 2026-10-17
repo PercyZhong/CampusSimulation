@@ -205,7 +205,7 @@ def scenario_context(seed, day, student):
         else:
             break
     peer_recent = sum(event.get("action") == "peer" for event in recent)
-    exam_days = 4 - ((day - 1) % 7)
+    exam_days = (4 - ((day - 1) % 7)) % 7
     return {"exam_days_remaining": exam_days, "exam_period": exam_days <= 2,
             "consecutive_attendance": attend_streak,
             "recent_social_contacts": peer_recent,
@@ -230,11 +230,19 @@ def action_choice(student, day, config):
     sid = student["id"]
     if student["pending_day"] is not None:
         return "accept_support"
+    scenario = scenario_context(config.seed, day, student)
     propensity = 0.14 + 0.48 * student["willingness"] + 0.14 * (1 - student["connection"])
+    propensity += 0.08 * (student.get("help_seeking_belief", 0.5) - 0.5)
+    if scenario["exam_period"]:
+        propensity += 0.025
     if config.condition == "outreach" and student["outreach_seen"]:
         propensity += 0.16
     barrier = config.access_barrier * (0.45 if config.condition == "easier_access" else 1)
     if unit(config.seed, "choice", day, sid) < clamp(propensity - barrier):
         return "request"
     draw = unit(config.seed, "other_choice", day, sid)
-    return "peer" if draw < 0.24 else "rest" if draw < 0.46 else "attend"
+    peer_limit = clamp(0.24 + 0.08 * (student.get("belonging", 0.5) - 0.5)
+                       - 0.1 * (student.get("social_avoidance", 0.5) - 0.5)
+                       + (0.03 if scenario["low_social_signal"] else 0))
+    rest_limit = clamp(peer_limit + 0.22 + (0.04 if scenario["exam_period"] else 0))
+    return "peer" if draw < peer_limit else "rest" if draw < rest_limit else "attend"

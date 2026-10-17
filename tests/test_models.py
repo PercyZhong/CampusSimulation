@@ -245,3 +245,34 @@ def test_llm_peer_run_records_generated_dialogue_and_two_calls(monkeypatch, tmp_
     assert all(event["detail"]["backend"] == "llm" for event in peers)
     assert all(event["detail"]["usage"]["total_tokens"] == 17 for event in peers)
     assert all(len(event["detail"]["turns"]) == 4 for event in peers)
+
+
+def test_rejected_peer_invitation_does_not_call_dialogue_model(monkeypatch, tmp_path):
+    import asyncio
+
+    from society0.kernel.runner import run_plan
+
+    from campus_sim.analysis import export
+    from campus_sim.plan import build
+
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "local-test-key")
+    monkeypatch.setattr("campus_sim.mechanism.peer_response",
+                        lambda *args: "rejected")
+    requests = []
+
+    def fake_post(url, headers, payload):
+        requests.append(payload)
+        assert payload["max_tokens"] == 80
+        return {"choices": [{"message": {"content": '{"action":"peer"}'}}],
+                "usage": {"total_tokens": 9}}
+
+    monkeypatch.setattr("campus_sim.models._post", fake_post)
+    output = tmp_path / "peer-rejected"
+    raw = {"end": 1, "n_students": 2, "driver": "llm", "model_provider": "qwen",
+           "model_id": "qwen-plus", "max_model_calls": 4}
+    asyncio.run(run_plan(output, build(raw)))
+    summary = export(output)
+    assert len(requests) == summary["network_calls"] == summary["paid_model_calls"] == 2
+    assert summary["peer_invitation_count"] == 2
+    assert summary["peer_response_counts"] == {"rejected": 2}
+    assert summary["peer_dialogue_completed"] == 0

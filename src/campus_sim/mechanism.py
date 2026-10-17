@@ -30,6 +30,8 @@ SCHEMA = (
     ("CREATE TABLE campus_staff_shifts(day INTEGER NOT NULL,actor TEXT NOT NULL,"
      "slots INTEGER NOT NULL,PRIMARY KEY(day,actor))"),
     "CREATE TABLE campus_edges(a TEXT NOT NULL,b TEXT NOT NULL,PRIMARY KEY(a,b))",
+    ("CREATE TABLE campus_peer_invitations(day INTEGER NOT NULL,actor TEXT NOT NULL,"
+     "partner TEXT NOT NULL,response TEXT NOT NULL,PRIMARY KEY(day,actor))"),
     ("CREATE TABLE campus_relationships(a TEXT NOT NULL,b TEXT NOT NULL,strength REAL NOT NULL,"
      "first_day INTEGER,last_day INTEGER,contacts INTEGER NOT NULL,PRIMARY KEY(a,b))"),
     "CREATE TABLE campus_queue(actor TEXT NOT NULL PRIMARY KEY, requested_day INTEGER NOT NULL, ordinal INTEGER NOT NULL UNIQUE)",
@@ -149,11 +151,57 @@ class Campus:
             writer, scope.moment.time, scope.actor, "model_decision", "completed", detail=detail))
         return ActionResult("completed", {"action": detail["action"]})
 
+    def peer_invite(self, scope, target):
+        day, actor = scope.moment.time, scope.actor
+        if target.key != actor:
+            return ActionResult("rejected", {"reason": "wrong_actor"})
+
+        def write(writer):
+            existing = writer.query(
+                "SELECT partner,response FROM campus_peer_invitations WHERE day=? AND actor=?",
+                (day, actor), max_rows=1)
+            if existing:
+                partner, response = existing[0]
+                return {"status": "completed" if response == "accepted" else "rejected",
+                        "partner": partner, "response": response}
+            peers = writer.query(
+                "SELECT CASE WHEN a=? THEN b ELSE a END FROM campus_edges "
+                "WHERE a=? OR b=? ORDER BY 1", (actor, actor, actor))
+            if not peers:
+                self.event(writer, day, actor, "peer", "rejected", "no_peer_edge")
+                return {"status": "rejected", "reason": "no_peer_edge"}
+            partner = peers[int(unit(self.config.seed, "peer_partner", day, actor)
+                                * len(peers))][0]
+            rows = writer.query("SELECT body FROM campus_students WHERE id=?", (partner,),
+                                max_rows=1)
+            partner_state = json.loads(rows[0][0])
+            response = peer_response(self.config.seed, day, actor, partner, partner_state)
+            writer.execute("INSERT INTO campus_peer_invitations VALUES(?,?,?,?)",
+                           (day, actor, partner, response))
+            basis = "partner_state_availability_v1"
+            self.event(writer, day, actor, "peer_invitation", "completed",
+                       detail={"partner": partner, "response": response, "basis": basis})
+            self.event(writer, day, partner, "peer_response", response,
+                       detail={"inviter": actor, "partner": partner, "basis": basis})
+            if response != "accepted":
+                self.event(writer, day, actor, "peer", "rejected", response,
+                           detail={"partner": partner, "partner_response": response})
+            return {"status": "completed" if response == "accepted" else "rejected",
+                    "partner": partner, "response": response,
+                    "reason": response if response != "accepted" else None}
+
+        result = self.store.transaction(write)
+        return ActionResult(result["status"], result)
+
     def act(self, scope, target, action, args=None):
         day, actor = scope.moment.time, scope.actor
         args = args or {}
         if target.key != actor:
             return ActionResult("rejected", {"reason": "wrong_actor"})
+        if action == "peer":
+            invitation = self.peer_invite(scope, target)
+            if invitation.status != "completed":
+                return invitation
         if action == "peer" and self.config.driver == "llm":
             turns = _dialogue(json.dumps({"turns": args.get("turns")}), actor,
                               args.get("partner"))
@@ -224,23 +272,15 @@ class Campus:
                 state["stress"] = clamp(state["stress"] - 0.025)
                 state["mood"] = clamp(state["mood"] + 0.015)
             elif action == "peer":
-                partner = peers[int(unit(self.config.seed, "peer_partner", day, actor) * len(peers))][0]
+                invitation = writer.query(
+                    "SELECT partner,response FROM campus_peer_invitations WHERE day=? AND actor=?",
+                    (day, actor), max_rows=1)
+                partner = invitation[0][0]
                 if self.config.driver == "llm" and args.get("partner") != partner:
                     raise ValueError("peer dialogue partner does not match selected partner")
                 partner_rows = writer.query("SELECT body FROM campus_students WHERE id=?",
                                             (partner,), max_rows=1)
                 partner_state = json.loads(partner_rows[0][0])
-                response = peer_response(self.config.seed, day, actor, partner, partner_state)
-                invitation = {"partner": partner, "response": response,
-                              "basis": "partner_state_availability_v1"}
-                self.event(writer, day, actor, "peer_invitation", "completed", detail=invitation)
-                self.event(writer, day, partner, "peer_response", response, detail={
-                    "inviter": actor, "partner": partner,
-                    "basis": "partner_state_availability_v1"})
-                if response != "accepted":
-                    self.event(writer, day, actor, "peer", "rejected", response,
-                               detail={"partner": partner, "partner_response": response})
-                    return {"status": "rejected", "reason": response}
                 left, right = sorted((actor, partner))
                 rel = writer.query("SELECT strength,first_day,last_day,contacts FROM campus_relationships "
                                    "WHERE a=? AND b=?", (left, right))
@@ -623,7 +663,7 @@ def campus_plugin(config):
             actions.register(Action("campus." + name, ("campus", "student"), name, action_schema,
                 lambda scope, target, args, name=name: campus.act(scope, target, name, args),
                 available=lambda scope, target: target.key == scope.actor),
-                dependencies=("campus_students", "campus_queue", "campus_edges", "campus_relationships", "campus_service_usage", "campus_follow_up_usage", "campus_interactions"))
+                dependencies=("campus_students", "campus_queue", "campus_edges", "campus_relationships", "campus_peer_invitations", "campus_service_usage", "campus_follow_up_usage", "campus_interactions"))
         actions.register(Action("campus.staff_shift", ("campus", "staff"), "staff_shift", schema,
             lambda scope, target, args: campus.staff_shift(scope, target),
             available=lambda scope, target: target.key == scope.actor),
@@ -641,5 +681,11 @@ def campus_plugin(config):
             lambda scope, target, args: campus.model_decision(scope, target, args),
             available=lambda scope, target: target.key == scope.actor),
             dependencies=("campus_events",))
+        actions.register(Action("campus.peer_invite", ("campus", "student"),
+            "peer_invite", schema,
+            lambda scope, target, args: campus.peer_invite(scope, target),
+            available=lambda scope, target: target.key == scope.actor),
+            dependencies=("campus_students", "campus_edges", "campus_peer_invitations",
+                          "campus_events"))
         context.provide("campus", campus)
     return Plugin("campus", ("storage", "interaction"), install, schema=SCHEMA, initialize=initialize)

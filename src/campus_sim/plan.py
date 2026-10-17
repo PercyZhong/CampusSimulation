@@ -74,16 +74,25 @@ def build(raw):
                  },
                  "policy": policy, "usage": usage})
         args = {}
-        if action == "peer" and model_client is not None:
-            peer_details = await session.information.read("/peer_dialogue/" + actor)
-            peer_context = json.loads(peer_details.data)
-            partner = peer_context["partner"]
-            turns, dialogue_usage = model_client.peer_dialogue(
-                day=session.moment.time, actor=actor, partner=partner,
-                actor_state=state, partner_state=peer_context["partner_state"],
-                shared_memory=state["memory_context"]["social_memory"])
-            args = {"partner": partner, "turns": turns, "usage": dialogue_usage,
-                    "prompt_version": DIALOGUE_PROMPT_VERSION}
+        if action == "peer":
+            invitation = await session.actions.invoke(
+                "campus.peer_invite", Ref("campus", "student", actor), {})
+            if invitation.status != "completed":
+                return DriverResult("completed", {"action": action,
+                    "status": invitation.status,
+                    "reason": (invitation.value or {}).get("reason")}, "rule")
+            if model_client is not None:
+                peer_details = await session.information.read("/peer_dialogue/" + actor)
+                peer_context = json.loads(peer_details.data)
+                partner = invitation.value["partner"]
+                if peer_context["partner"] != partner:
+                    raise ValueError("peer invitation partner does not match dialogue context")
+                turns, dialogue_usage = model_client.peer_dialogue(
+                    day=session.moment.time, actor=actor, partner=partner,
+                    actor_state=state, partner_state=peer_context["partner_state"],
+                    shared_memory=state["memory_context"]["social_memory"])
+                args = {"partner": partner, "turns": turns, "usage": dialogue_usage,
+                        "prompt_version": DIALOGUE_PROMPT_VERSION}
         result = await session.actions.invoke("campus." + action,
                                                Ref("campus", "student", actor), args)
         return DriverResult("completed", {"action": action, "status": result.status,
