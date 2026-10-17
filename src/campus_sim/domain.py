@@ -186,9 +186,9 @@ def club_context(student_id):
 
 def peer_response(seed, day, actor, partner, partner_state):
     """Return an auditable synthetic partner response before dialogue starts."""
-    availability = 0.88 - 0.18 * partner_state.get("stress", 0.5)
+    availability = 1.0 - 0.2 * max(0.0, partner_state.get("stress", 0.5) - 0.65)
     if partner_state.get("pending_day") is not None:
-        availability -= 0.12
+        availability -= 0.2
     draw = unit(seed, "peer_response", day, actor, partner)
     if draw >= clamp(availability):
         return "rejected" if draw < clamp(availability) + 0.08 else "timeout"
