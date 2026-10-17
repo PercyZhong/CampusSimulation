@@ -173,10 +173,9 @@ class Campus:
                     reason = "service_closed"
                 elif not first or first[0][0] != actor:
                     reason = "queue_turn"
-                elif ((used[0][0] if used else 0) + self.follow_up_slots_used(writer, day)
+                elif (assigned_staff is None
+                      or (used[0][0] if used else 0) + self.follow_up_slots_used(writer, day)
                       >= self.available_slots(writer, day)):
-                    reason = "capacity_full"
-                elif assigned_staff is None:
                     reason = "capacity_full"
             if action == "peer":
                 peers = writer.query(
