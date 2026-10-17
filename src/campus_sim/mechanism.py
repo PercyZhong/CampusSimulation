@@ -247,11 +247,24 @@ class Campus:
                 writer.execute("UPDATE campus_students SET body=? WHERE id=?",
                                (dumps(partner_state), partner))
             self.remember(state, memory)
+            group_detail = None
             if action == "attend":
                 context = academic_context(self.config.seed, day, actor)
                 ordinal = writer.query("SELECT COALESCE(MAX(ordinal),0)+1 FROM campus_interactions")[0][0]
                 writer.execute("INSERT INTO campus_interactions VALUES(?,?,?,?,?,?)",
                                (ordinal, day, actor, classmate, "class_attendance", dumps(context)))
+                prior = writer.query(
+                    "SELECT actor,context FROM campus_interactions "
+                    "WHERE day=? AND interaction='class_attendance' AND actor!=? ORDER BY ordinal",
+                    (day, actor))
+                group = [sid for sid, encoded in prior if json.loads(encoded) == context]
+                if len(group) == 2:
+                    participants = [*group, actor]
+                    group_detail = {"participants": participants, "context": context,
+                                    "trigger": "third_same_course_arrival_v1"}
+                    writer.execute("INSERT INTO campus_interactions VALUES(?,?,?,?,?,?)",
+                                   (ordinal + 1, day, actor, None, "study_group",
+                                    dumps(group_detail)))
                 if classmate:
                     partner_rows = writer.query("SELECT body FROM campus_students WHERE id=?",
                                                 (classmate,), max_rows=1)
@@ -273,6 +286,9 @@ class Campus:
             detail["feedback"] = feedback
             self.event(writer, day, actor, action, "completed",
                        detail=detail)
+            if group_detail is not None:
+                self.event(writer, day, actor, "study_group", "completed",
+                           detail=group_detail)
             return {"status": "completed", "action": action}
         result = self.store.transaction(write)
         return ActionResult(result["status"], result)

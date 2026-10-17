@@ -83,6 +83,18 @@ def summarize(run_dir):
            or partner[0] >= e["ordinal"] or partner[1] != e["detail"]["context"]
            for e in current_contacts):
         raise ValueError("class contact lacks same-day shared attendance")
+    study_groups = [e for e in events if e["action"] == "study_group"
+                    and e["status"] == "completed"]
+    for event in study_groups:
+        detail = event["detail"]
+        participants = detail["participants"]
+        if (len(participants) != 3 or len(set(participants)) != 3
+                or participants[-1] != event["actor"]
+                or detail.get("trigger") != "third_same_course_arrival_v1"
+                or any((attended := attendance.get((event["day"], sid))) is None
+                       or attended[0] >= event["ordinal"]
+                       or attended[1] != detail["context"] for sid in participants)):
+            raise ValueError("study group lacks three prior same-course arrivals")
     recorded_model_calls = sum(
         e["action"] == "model_decision" or
         (e["action"] == "peer" and e["status"] == "completed"
@@ -120,6 +132,7 @@ def summarize(run_dir):
                "trajectory_action_transitions": transitions,
                "trajectory_unique_peer_partners": len(peer_partners - {None}),
                "class_attendance_interactions": len(classmate_events),
+               "study_group_events": len(study_groups),
                "served_total": sum(d["served_today"] for d in days),
                "network_calls": recorded_model_calls,
                "paid_model_calls": recorded_model_calls,

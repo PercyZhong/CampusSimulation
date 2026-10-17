@@ -188,7 +188,7 @@ def test_class_contacts_require_shared_course_and_prior_arrival(tmp_path):
     async def exercise():
         async with compose(tmp_path / "class", build(raw).plugins) as host:
             actions = host.service("interaction", "actions")
-            for actor in ("s000", "s005", "s001"):
+            for actor in ("s000", "s005", "s001", "s002"):
                 with InteractionScope(actor, Moment(1, "decide")) as scope:
                     result = await actions.bound(scope).invoke(
                         "campus.attend", Ref("campus", "student", actor), {})
@@ -200,11 +200,21 @@ def test_class_contacts_require_shared_course_and_prior_arrival(tmp_path):
             assert rows[1][1] is None
             assert rows[2][1] == "s000"
             assert json.loads(rows[2][2]) == json.loads(rows[0][2])
+            assert rows[3][1] in {"s000", "s001"}
             details = store.read(lambda view: [json.loads(row[0]) for row in view.iter_query(
                 "SELECT detail FROM campus_events WHERE action='attend' ORDER BY ordinal")])
-            assert [detail["classmate"] for detail in details] == [None, None, "s000"]
+            assert [detail["classmate"] for detail in details[:3]] == [None, None, "s000"]
             assert all(detail["contact_rule"] == "same_course_prior_attendance_v1"
                        for detail in details)
+            group = store.read(lambda view: view.query(
+                "SELECT actor,context FROM campus_interactions WHERE interaction='study_group'",
+                max_rows=1))[0]
+            assert group[0] == "s002"
+            assert json.loads(group[1])["participants"] == ["s000", "s001", "s002"]
+            group_event = store.read(lambda view: view.query(
+                "SELECT detail FROM campus_events WHERE action='study_group'",
+                max_rows=1))[0][0]
+            assert json.loads(group_event)["trigger"] == "third_same_course_arrival_v1"
 
     asyncio.run(exercise())
 
