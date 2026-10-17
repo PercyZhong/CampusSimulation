@@ -37,6 +37,10 @@ def test_two_day_completed_action_and_export(tmp_path):
     assert all(slots == 3 for _, _, slots in shifts)
     assert export(path)["complete_steps"] == 2
     summary = export(path)
+    interactions = [json.loads(line) for line in
+                    (path / "interactions.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert all({"day", "ordinal", "actor", "participants", "kind", "venue",
+                "response", "outcome"} <= record.keys() for record in interactions)
     assert summary["n_staff"] == 2
     _, _, events = summarize(path)
     snapshots = [event for event in events if event["action"] == "student_state"]

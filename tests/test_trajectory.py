@@ -4,6 +4,7 @@ from campus_sim.analysis import (
     ACTION_NAMES,
     course_exposure_metrics,
     interaction_network_metrics,
+    interaction_records,
     support_recovery_metrics,
     support_window_metrics,
     trajectory_metrics,
@@ -165,3 +166,28 @@ def test_support_recovery_old_events_report_missing_snapshots():
     assert result["missing_snapshot_students"] == 1
     assert result["mean_change"] == {
         "stress": None, "mood": None, "connection": None}
+
+
+def test_interaction_records_separate_dialogue_copresence_and_service():
+    events = [event(1, 1, "s000", "peer", detail={"partner": "s001"}),
+              event(2, 1, "s002", "peer", "rejected"),
+              event(3, 1, "s000", "attend", detail={
+                  "classmate": "s001", "context": {"venue": "building-1"}}),
+              event(4, 1, "s002", "study_group", detail={
+                  "participants": ["s000", "s001", "s002"],
+                  "context": {"venue": "building-1"}}),
+              event(5, 2, "s001", "accept_support"),
+              event(6, 3, "s001", "staff_follow_up"),
+              event(7, 3, "s001", "student_state")]
+    events[1]["reason"] = "no_peer_edge"
+    records = interaction_records(events)
+    assert len(records) == 6
+    assert records[0]["participants"] == ["s000", "s001"]
+    assert records[0]["response"] == "dialogue_recorded"
+    assert records[1]["response"] == "unavailable"
+    assert records[1]["outcome"] == "no_peer_edge"
+    assert records[2]["venue"] == "building-1"
+    assert records[2]["response"] == "not_recorded"
+    assert records[3]["outcome"] == "copresent"
+    assert records[4]["participants"] == ["s001", "service:main"]
+    assert records[5]["response"] == "not_recorded"

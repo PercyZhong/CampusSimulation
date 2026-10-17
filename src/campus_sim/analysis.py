@@ -12,6 +12,48 @@ SCHEMA_VERSION = 1
 ACTION_NAMES = ("attend", "rest", "peer", "request", "accept_support")
 
 
+def interaction_records(events):
+    """Project observed actions into one auditable interaction shape."""
+    records = []
+    for event in events:
+        action, detail = event["action"], event["detail"]
+        common = {"day": event["day"], "ordinal": event["ordinal"],
+                  "source_action": action, "actor": event["actor"],
+                  "status": event["status"]}
+        if action == "peer" and event["status"] == "completed":
+            records.append({**common, "kind": "peer_dialogue",
+                            "participants": [event["actor"], detail["partner"]],
+                            "venue": None, "response": "dialogue_recorded",
+                            "outcome": "completed"})
+        elif action == "peer" and event["status"] == "rejected":
+            records.append({**common, "kind": "peer_dialogue",
+                            "participants": [event["actor"]], "venue": None,
+                            "response": "unavailable", "outcome": event.get("reason")})
+        elif action == "attend" and event["status"] == "completed":
+            context = detail.get("context") or {}
+            records.append({**common, "kind": "class_attendance",
+                            "participants": ([event["actor"], detail["classmate"]]
+                                             if detail.get("classmate") else [event["actor"]]),
+                            "venue": context.get("venue"),
+                            "response": "not_recorded", "outcome": "attended"})
+        elif action == "study_group" and event["status"] == "completed":
+            records.append({**common, "kind": "study_group_copresence",
+                            "participants": detail["participants"],
+                            "venue": detail["context"].get("venue"),
+                            "response": "not_recorded", "outcome": "copresent"})
+        elif action == "accept_support" and event["status"] == "completed":
+            records.append({**common, "kind": "service_contact",
+                            "participants": [event["actor"], "service:main"],
+                            "venue": None, "response": "service_delivered",
+                            "outcome": "completed"})
+        elif action == "staff_follow_up" and event["status"] == "completed":
+            records.append({**common, "kind": "service_follow_up",
+                            "participants": ["service:main", event["actor"]],
+                            "venue": None, "response": "not_recorded",
+                            "outcome": "completed"})
+    return records
+
+
 def selected_actions(events):
     """Use LLM decisions when present, otherwise student action attempts."""
     decisions = [event for event in events if event["action"] == "model_decision"
@@ -382,6 +424,9 @@ def export(run_dir):
     with (output / "events.jsonl").open("w", encoding="utf-8") as stream:
         for event in events:
             stream.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
+    with (output / "interactions.jsonl").open("w", encoding="utf-8") as stream:
+        for record in interaction_records(events):
+            stream.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
     return summary
 
 
