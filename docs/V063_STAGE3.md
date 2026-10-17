@@ -33,3 +33,9 @@
 先运行 9 个规则基线，确认矩阵和导出格式；再分别运行 Qwen 和 DeepSeek 的 9 个单元。任何单元失败时保留失败目录和错误信息，修复后使用相同协议重新运行，不删除失败证据。矩阵汇总应从各目录的 `summary.json` 和 `events.jsonl` 自动生成，禁止手工抄录行动计数。
 
 本协议不评价对话的临床、安全或现实有效性。对话质量只做结构和内容抽样检查：四轮交替、回应前文、使用状态/记忆、无诊断和虚假服务使用声明；人工评分规则需在下一阶段单独冻结。
+
+## 自动汇总
+
+同步 27 个运行目录后，在项目根目录执行 `python -m campus_sim.cli matrix-report --root runs`。命令会验证运行数量、10 步完成状态、40 名学生和种子，读取每个目录的 `events.jsonl`，生成 `runs/v063-matrix-report.json`。报告明确保存 `model_provider`、`model_id`、五种行动的选择次数与选择率、`peer_dialogue_status`，以及每个驱动/条件组的均值、样本标准差和同种子政策差值。
+
+`peer_dialogue_status` 有三种含义：`llm_validated` 表示至少有一次 LLM `peer` 且所有记录均为四轮；`no_peer_selected` 表示 LLM 运行没有选择 `peer`，不等同于对话质量通过；`rule_offline` 表示使用离线规则文本。规则运行的 `peer` 计数来自实际 `peer` 事件，LLM 运行的选择计数优先来自 `model_decision.detail.action`。

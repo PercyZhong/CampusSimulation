@@ -50,6 +50,8 @@ def main(argv=None):
     check = sub.add_parser("verify-resume")
     check.add_argument("original")
     check.add_argument("resumed")
+    matrix = sub.add_parser("matrix-report")
+    matrix.add_argument("--root", default="runs")
     web = sub.add_parser("web")
     web.add_argument("--output", default="runs/workbench")
     web.add_argument("--port", type=int, default=8765)
@@ -68,6 +70,13 @@ def main(argv=None):
         return 0
     if args.command == "verify-resume":
         print(json.dumps(verify_resume(args.original, args.resumed)))
+        return 0
+    if args.command == "matrix-report":
+        from .matrix import build_report
+        report = build_report(args.root)
+        output = Path(args.root) / "v063-matrix-report.json"
+        output.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        print(json.dumps({"runs": report["found_runs"], "report": str(output)}, ensure_ascii=False))
         return 0
     from society0.kernel.runner import run_plan
     if args.command == "run":

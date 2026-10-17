@@ -7,6 +7,7 @@ from pathlib import Path
 from society0.kernel.observation import Observation
 
 SCHEMA_VERSION = 1
+ACTION_NAMES = ("attend", "rest", "peer", "request", "accept_support")
 
 
 def _read(run_dir):
@@ -49,6 +50,14 @@ def summarize(run_dir):
     for event in events:
         key = event["action"] + ":" + event["status"]
         action_counts[key] = action_counts.get(key, 0) + 1
+    decisions = [e for e in events if e["action"] == "model_decision" and e["status"] == "completed"]
+    selection_counts = {name: sum(e["detail"].get("action") == name for e in decisions)
+                        for name in ACTION_NAMES}
+    selection_rates = {name: count / len(decisions) if decisions else None
+                       for name, count in selection_counts.items()}
+    peer_events = [e for e in events if e["action"] == "peer" and e["status"] == "completed"]
+    peer_llm = [e for e in peer_events if e["detail"].get("backend") == "llm"]
+    peer_valid = [e for e in peer_llm if len(e["detail"].get("turns", [])) == 4]
     recorded_model_calls = sum(
         e["action"] == "model_decision" or
         (e["action"] == "peer" and e["status"] == "completed"
@@ -75,6 +84,14 @@ def summarize(run_dir):
                     "bins_0_to_1_by_0_2": [sum(min(4, int(s["stress"] * 5)) == i for s in students)
                                            for i in range(5)]},
                "initial_groups": groups, "action_counts": action_counts,
+               "model_decision_count": len(decisions),
+               "action_selection_counts": selection_counts,
+               "action_selection_rates": selection_rates,
+               "peer_dialogue_completed": len(peer_events),
+               "peer_dialogue_llm_completed": len(peer_llm),
+               "peer_dialogue_valid_count": len(peer_valid),
+               "peer_dialogue_valid_rate": (len(peer_valid) / len(peer_llm)
+                                             if peer_llm else None),
                "served_total": sum(d["served_today"] for d in days),
                "network_calls": recorded_model_calls,
                "paid_model_calls": recorded_model_calls,
