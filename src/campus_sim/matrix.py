@@ -9,6 +9,7 @@ from .analysis import (
     ACTION_NAMES,
     course_exposure_metrics,
     interaction_network_metrics,
+    support_recovery_metrics,
     support_window_metrics,
     trajectory_metrics,
 )
@@ -54,6 +55,7 @@ def _row(path):
                    if len(event["detail"].get("turns", [])) == 4]
     trajectories = trajectory_metrics(events)
     support_windows = support_window_metrics(events, summary["complete_steps"])
+    recovery = support_recovery_metrics(events, summary["complete_steps"])
     course_exposure = course_exposure_metrics(events)
     network = interaction_network_metrics(events)
     row = {"run": path.name, "driver": driver, "condition": condition, "seed": seed,
@@ -72,6 +74,7 @@ def _row(path):
            "peer_repeat_contact_rate": trajectories["peer_repeat_contact_rate"],
            "trajectory_transition_matrix": trajectories["trajectory_transition_matrix"],
            "support_window_metrics": support_windows,
+           "support_recovery_metrics": recovery,
            "course_exposure_metrics": course_exposure,
            "interaction_network_unique_edges": network["interaction_network_unique_edges"],
            "interaction_network_edges_by_source": network[
@@ -138,6 +141,19 @@ def build_report(root="runs"):
                 for key in ("attendance_events", "context_recorded_events",
                             "context_missing_events", "unique_courses", "unique_venues",
                             "students_with_attendance", "students_with_recorded_context")}
+            recovery = {"window_days": 3}
+            for key in ("supported_students", "observed_students", "censored_students",
+                        "missing_snapshot_students"):
+                recovery[key] = sum(row["support_recovery_metrics"][key] for row in subset)
+            recovery["mean_change"] = {
+                name: (sum(row["support_recovery_metrics"]["mean_change"][name]
+                           * row["support_recovery_metrics"]["observed_students"]
+                           for row in subset
+                           if row["support_recovery_metrics"]["observed_students"])
+                       / recovery["observed_students"]
+                       if recovery["observed_students"] else None)
+                for name in ("stress", "mood", "connection")}
+            group["support_recovery_metrics"] = recovery
             by_group[f"{driver}:{condition}"] = group
     paired = []
     for driver in DRIVERS:

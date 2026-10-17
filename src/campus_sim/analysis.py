@@ -88,6 +88,49 @@ def support_window_metrics(events, complete_step, width=3):
     return result
 
 
+def support_recovery_metrics(events, complete_step, width=3):
+    """Pair supported students' end-of-day states at service and three days later."""
+    snapshots = {}
+    for event in events:
+        if event["action"] != "student_state" or event["status"] != "completed":
+            continue
+        detail = event["detail"]
+        if detail.get("phase") == "end_of_day_v1":
+            key = event["day"], event["actor"]
+            if key in snapshots:
+                raise ValueError("duplicate end-of-day student state")
+            if any(not isinstance(detail.get(name), (int, float))
+                   or isinstance(detail[name], bool) or not 0 <= detail[name] <= 1
+                   for name in ("stress", "mood", "connection")):
+                raise ValueError("invalid end-of-day student state")
+            snapshots[key] = detail
+    anchors = {}
+    for event in sorted(events, key=lambda item: item["ordinal"]):
+        if event["action"] == "accept_support" and event["status"] == "completed":
+            anchors.setdefault(event["actor"], event["day"])
+    censored = sum(day + width > complete_step for day in anchors.values())
+    missing = 0
+    observed = []
+    for actor, day in anchors.items():
+        if day + width > complete_step:
+            continue
+        first = snapshots.get((day, actor))
+        last = snapshots.get((day + width, actor))
+        if first is None or last is None:
+            missing += 1
+            continue
+        if first.get("supported") is not True or last.get("supported") is not True:
+            raise ValueError("supported student state disagrees with support event")
+        observed.append({name: last[name] - first[name]
+                         for name in ("stress", "mood", "connection")})
+    return {"window_days": width, "supported_students": len(anchors),
+            "observed_students": len(observed), "censored_students": censored,
+            "missing_snapshot_students": missing,
+            "mean_change": {name: (sum(row[name] for row in observed) / len(observed)
+                                  if observed else None)
+                            for name in ("stress", "mood", "connection")}}
+
+
 def course_exposure_metrics(events):
     """Describe recorded attendance contexts without inferring missing schedules."""
     attendance = [event for event in events if event["action"] == "attend"
@@ -221,6 +264,7 @@ def summarize(run_dir):
     peer_valid = [e for e in peer_llm if len(e["detail"].get("turns", [])) == 4]
     trajectories = trajectory_metrics(events)
     support_windows = support_window_metrics(events, status["complete"]["step"])
+    recovery = support_recovery_metrics(events, status["complete"]["step"])
     course_exposure = course_exposure_metrics(events)
     network = interaction_network_metrics(events)
     peer_partners = {e["detail"].get("partner") for e in peer_events}
@@ -285,6 +329,7 @@ def summarize(run_dir):
                                              if peer_llm else None),
                **trajectories,
                "support_window_metrics": support_windows,
+               "support_recovery_metrics": recovery,
                "course_exposure_metrics": course_exposure,
                **network,
                "trajectory_unique_peer_partners": len(peer_partners - {None}),

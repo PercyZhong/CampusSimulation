@@ -4,6 +4,7 @@ from campus_sim.analysis import (
     ACTION_NAMES,
     course_exposure_metrics,
     interaction_network_metrics,
+    support_recovery_metrics,
     support_window_metrics,
     trajectory_metrics,
 )
@@ -135,3 +136,32 @@ def test_course_exposure_distinguishes_missing_context_from_zero_attendance():
     assert missing["context_missing_events"] == 1
     assert empty["attendance_events"] == 0
     assert empty["context_missing_events"] == 0
+
+
+def test_support_recovery_uses_student_snapshots_and_tracks_missing_data():
+    events = [event(1, 2, "s000", "accept_support"),
+              event(2, 2, "s000", "student_state", detail={
+                  "phase": "end_of_day_v1", "stress": 0.5, "mood": 0.4,
+                  "connection": 0.3, "supported": True}),
+              event(3, 5, "s000", "student_state", detail={
+                  "phase": "end_of_day_v1", "stress": 0.3, "mood": 0.6,
+                  "connection": 0.4, "supported": True}),
+              event(4, 2, "s001", "accept_support"),
+              event(5, 6, "s002", "accept_support")]
+    result = support_recovery_metrics(events, complete_step=6)
+    assert result["supported_students"] == 3
+    assert result["observed_students"] == 1
+    assert result["missing_snapshot_students"] == 1
+    assert result["censored_students"] == 1
+    assert round(result["mean_change"]["stress"], 6) == -0.2
+    assert round(result["mean_change"]["mood"], 6) == 0.2
+    assert round(result["mean_change"]["connection"], 6) == 0.1
+
+
+def test_support_recovery_old_events_report_missing_snapshots():
+    result = support_recovery_metrics(
+        [event(1, 2, "s000", "accept_support")], complete_step=6)
+    assert result["observed_students"] == 0
+    assert result["missing_snapshot_students"] == 1
+    assert result["mean_change"] == {
+        "stress": None, "mood": None, "connection": None}

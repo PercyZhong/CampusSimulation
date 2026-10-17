@@ -39,6 +39,9 @@ def test_two_day_completed_action_and_export(tmp_path):
     summary = export(path)
     assert summary["n_staff"] == 2
     _, _, events = summarize(path)
+    snapshots = [event for event in events if event["action"] == "student_state"]
+    assert len(snapshots) == raw["end"] * raw["n_students"]
+    assert all(event["detail"]["phase"] == "end_of_day_v1" for event in snapshots)
     by_actor = {}
     for event in events:
         if event["actor"].startswith("s") and event["action"] in {

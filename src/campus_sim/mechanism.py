@@ -341,6 +341,10 @@ class Campus:
                 state["connection"] = clamp(state["connection"] - 0.012)
                 state["low_streak"] = state["low_streak"] + 1 if state["connection"] < 0.3 else 0
                 writer.execute("UPDATE campus_students SET body=? WHERE id=?", (dumps(state), actor))
+                self.event(writer, day, actor, "student_state", "completed", detail={
+                    "phase": "end_of_day_v1", "stress": state["stress"],
+                    "mood": state["mood"], "connection": state["connection"],
+                    "supported": state["supported"]})
                 states.append(state)
             metrics = {
                 "day": day, "academic_load": load, "requested": sum(s["ever_requested"] for s in states),
