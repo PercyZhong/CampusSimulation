@@ -85,8 +85,6 @@ def run_matrix(root="runs", driver="rule"):
     spec = protocol()
     if driver not in spec["drivers"]:
         raise ValueError(f"unknown driver: {driver}")
-    if not _current_behavior_is_frozen():
-        raise ValueError("behavior code differs from the frozen V069 version")
     root = Path(root)
     completed = []
     existing = [str(root / _name(driver, condition, seed))

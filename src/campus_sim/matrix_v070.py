@@ -22,7 +22,7 @@ BEHAVIOR_FILES = (
 
 
 def protocol():
-    return json.loads(PROTOCOL.read_text(encoding="utf-8"))
+    return json.loads(PROTOCOL.read_text(encoding="utf-8-sig"))
 
 
 def _git(*args):
