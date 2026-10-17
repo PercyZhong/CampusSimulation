@@ -7,6 +7,7 @@ from society0.kernel.plugins import Plugin
 
 from .domain import (
     academic_event,
+    academic_context,
     clamp,
     memory_context,
     next_mood,
@@ -30,6 +31,7 @@ SCHEMA = (
     "CREATE TABLE campus_follow_up_usage(day INTEGER PRIMARY KEY, used INTEGER NOT NULL)",
     "CREATE TABLE campus_events(ordinal INTEGER PRIMARY KEY,day INTEGER NOT NULL,actor TEXT NOT NULL,action TEXT NOT NULL,status TEXT NOT NULL,reason TEXT,detail TEXT NOT NULL)",
     "CREATE TABLE campus_days(day INTEGER PRIMARY KEY,body TEXT NOT NULL)",
+    "CREATE TABLE campus_interactions(ordinal INTEGER PRIMARY KEY,day INTEGER NOT NULL,actor TEXT NOT NULL,partner TEXT,interaction TEXT NOT NULL,context TEXT NOT NULL)",
 )
 
 
@@ -208,6 +210,13 @@ class Campus:
                 partner_state["mood"] = clamp(partner_state["mood"] + 0.01)
                 writer.execute("UPDATE campus_students SET body=? WHERE id=?",
                                (dumps(partner_state), partner))
+            classmate = None
+            if action == "attend":
+                nearby = writer.query(
+                    "SELECT id FROM campus_students WHERE id != ? ORDER BY id", (actor,))
+                if nearby:
+                    classmate = nearby[int(unit(self.config.seed, "classmate", day, actor)
+                                       * len(nearby))][0]
             detail = ({"wait_days": wait} if action == "accept_support" else
                       {"partner": partner,
                        "turns": turns if self.config.driver == "llm" else
@@ -221,7 +230,9 @@ class Campus:
                            "model": self.config.model_id,
                            "prompt_version": args["prompt_version"],
                            "usage": args["usage"]} if self.config.driver == "llm" else {})}
-                      if action == "peer" else None)
+                      if action == "peer" else
+                      {"context": academic_context(self.config.seed, day, actor),
+                       "classmate": classmate} if action == "attend" else None)
             memory = {"day": day, "action": action, "status": "completed"}
             if action == "peer":
                 memory["partner"] = partner
@@ -230,6 +241,18 @@ class Campus:
                 writer.execute("UPDATE campus_students SET body=? WHERE id=?",
                                (dumps(partner_state), partner))
             self.remember(state, memory)
+            if action == "attend":
+                context = academic_context(self.config.seed, day, actor)
+                ordinal = writer.query("SELECT COALESCE(MAX(ordinal),0)+1 FROM campus_interactions")[0][0]
+                writer.execute("INSERT INTO campus_interactions VALUES(?,?,?,?,?,?)",
+                               (ordinal, day, actor, classmate, "class_attendance", dumps(context)))
+                if classmate:
+                    partner_rows = writer.query("SELECT body FROM campus_students WHERE id=?",
+                                                (classmate,), max_rows=1)
+                    partner_state = json.loads(partner_rows[0][0])
+                    partner_state["connection"] = clamp(partner_state["connection"] + 0.004)
+                    writer.execute("UPDATE campus_students SET body=? WHERE id=?",
+                                   (dumps(partner_state), classmate))
             writer.execute("UPDATE campus_students SET body=? WHERE id=?", (dumps(state), actor))
             if action == "peer":
                 feedback = {key: round(state[key] - before[key], 6)
@@ -379,7 +402,8 @@ class CampusInformation:
                         self.campus.available_slots(view, scope.moment.time))}
         elif ref.kind == "course":
             data = {"day": scope.moment.time,
-                    "academic_load": academic_event(self.campus.config.seed, scope.moment.time)}
+                    "academic_load": academic_event(self.campus.config.seed, scope.moment.time),
+                    "context": academic_context(self.campus.config.seed, scope.moment.time, scope.actor)}
         else:
             data = {"peer_interactions_today": self.campus.store.read(lambda view: [row[0] for row in
                 view.iter_query("SELECT DISTINCT e.actor FROM campus_events e JOIN campus_edges t ON (t.a=? AND t.b=e.actor) OR (t.b=? AND t.a=e.actor) WHERE e.day=? AND e.action='peer' AND e.status='completed' ORDER BY e.actor",
@@ -420,7 +444,7 @@ def campus_plugin(config):
             actions.register(Action("campus." + name, ("campus", "student"), name, action_schema,
                 lambda scope, target, args, name=name: campus.act(scope, target, name, args),
                 available=lambda scope, target: target.key == scope.actor),
-                dependencies=("campus_students", "campus_queue", "campus_edges", "campus_service_usage", "campus_follow_up_usage"))
+                dependencies=("campus_students", "campus_queue", "campus_edges", "campus_service_usage", "campus_follow_up_usage", "campus_interactions"))
         actions.register(Action("campus.staff_shift", ("campus", "staff"), "staff_shift", schema,
             lambda scope, target, args: campus.staff_shift(scope, target),
             available=lambda scope, target: target.key == scope.actor),

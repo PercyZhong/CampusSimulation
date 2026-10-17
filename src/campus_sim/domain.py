@@ -164,6 +164,15 @@ def academic_event(seed, day):
     return round(0.04 + 0.12 * unit(seed, "academic_event", day), 6)
 
 
+def academic_context(seed, day, student_id):
+    """Deterministic course and place context for a student's daily attendance."""
+    course_number = 100 + int(unit(seed, "course", day, student_id) * 8)
+    venue_number = 1 + int(unit(seed, "venue", day, student_id) * 6)
+    return {"course_id": f"course-{course_number}",
+            "venue": f"building-{venue_number}",
+            "section": "A" if unit(seed, "section", day, student_id) < 0.5 else "B"}
+
+
 def next_stress(stress, recovery, load, supported):
     """Daily workload and recovery with bounded adaptation to sustained load."""
     return clamp(stress + load - 0.055 * recovery -

@@ -4,6 +4,7 @@ import pytest
 
 from campus_sim.domain import (
     Config,
+    academic_context,
     academic_event,
     action_choice,
     memory_context,
@@ -62,6 +63,13 @@ def test_policy_does_not_shift_external_schedule():
                     for day in range(1, 31)]
     student = make_population(base)[0][0]
     assert action_choice(student, 1, base) in {"attend", "rest", "peer", "request"}
+
+
+def test_academic_context_is_deterministic_and_student_specific():
+    first = academic_context(11, 2, "s000")
+    assert first == academic_context(11, 2, "s000")
+    assert set(first) == {"course_id", "venue", "section"}
+    assert first != academic_context(11, 2, "s001")
 
 
 def test_sustained_workload_retains_stress_range():

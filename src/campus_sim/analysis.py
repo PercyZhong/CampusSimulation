@@ -58,6 +58,11 @@ def summarize(run_dir):
     peer_events = [e for e in events if e["action"] == "peer" and e["status"] == "completed"]
     peer_llm = [e for e in peer_events if e["detail"].get("backend") == "llm"]
     peer_valid = [e for e in peer_llm if len(e["detail"].get("turns", [])) == 4]
+    trajectory = [e["detail"].get("action") for e in decisions]
+    transitions = sum(left != right for left, right in zip(trajectory, trajectory[1:]))
+    peer_partners = {e["detail"].get("partner") for e in peer_events}
+    classmate_events = [e for e in events if e["action"] == "attend"
+                        and e["status"] == "completed" and e["detail"].get("classmate")]
     recorded_model_calls = sum(
         e["action"] == "model_decision" or
         (e["action"] == "peer" and e["status"] == "completed"
@@ -92,6 +97,9 @@ def summarize(run_dir):
                "peer_dialogue_valid_count": len(peer_valid),
                "peer_dialogue_valid_rate": (len(peer_valid) / len(peer_llm)
                                              if peer_llm else None),
+               "trajectory_action_transitions": transitions,
+               "trajectory_unique_peer_partners": len(peer_partners - {None}),
+               "class_attendance_interactions": len(classmate_events),
                "served_total": sum(d["served_today"] for d in days),
                "network_calls": recorded_model_calls,
                "paid_model_calls": recorded_model_calls,
