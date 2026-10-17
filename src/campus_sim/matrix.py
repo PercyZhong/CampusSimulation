@@ -5,7 +5,7 @@ import re
 import statistics
 from pathlib import Path
 
-from .analysis import ACTION_NAMES
+from .analysis import ACTION_NAMES, trajectory_metrics
 
 PATTERN = re.compile(
     r"^v063-matrix-(rule|qwen|deepseek)-(baseline|outreach|easier_access)-seed(11|22|33)-10d$"
@@ -46,6 +46,7 @@ def _row(path):
     llm_peers = [event for event in peers if event["detail"].get("backend") == "llm"]
     valid_peers = [event for event in llm_peers
                    if len(event["detail"].get("turns", [])) == 4]
+    trajectories = trajectory_metrics(events)
     row = {"run": path.name, "driver": driver, "condition": condition, "seed": seed,
            "model_provider": summary.get("model_provider"), "model_id": summary.get("model_id"),
            "complete_steps": summary["complete_steps"],
@@ -54,6 +55,13 @@ def _row(path):
            "mean_stress": summary["stress_distribution"]["mean"],
            "mean_mood": summary.get("mood_distribution", {}).get("mean"),
            "model_calls": summary.get("network_calls", 0),
+           "trajectory_action_transitions": trajectories["trajectory_action_transitions"],
+           "trajectory_longest_same_action_streak": trajectories[
+               "trajectory_longest_same_action_streak"],
+           "peer_relationships_unique": trajectories["peer_relationships_unique"],
+           "peer_repeat_contacts": trajectories["peer_repeat_contacts"],
+           "peer_repeat_contact_rate": trajectories["peer_repeat_contact_rate"],
+           "trajectory_transition_matrix": trajectories["trajectory_transition_matrix"],
            "peer_completed": len(peers), "peer_valid_count": len(valid_peers),
            "peer_dialogue_status": ("llm_validated" if llm_peers and len(valid_peers) == len(llm_peers)
                                      else "rule_offline" if driver == "rule" else "no_peer_selected"),
@@ -76,7 +84,9 @@ def build_report(root="runs"):
         raise ValueError(f"missing matrix runs: {missing}")
     rows = [_row(root / name) for name in sorted(expected)]
     metrics = ("requested_rate", "supported_rate", "mean_stress", "mean_mood", "model_calls",
-               "peer_completed", "peer_valid_rate")
+               "peer_completed", "peer_valid_rate", "trajectory_action_transitions",
+               "trajectory_longest_same_action_streak", "peer_relationships_unique",
+               "peer_repeat_contacts", "peer_repeat_contact_rate")
     by_group = {}
     for driver in DRIVERS:
         for condition in CONDITIONS:
@@ -88,6 +98,10 @@ def build_report(root="runs"):
             group["action_selection_rates"] = {
                 name: _stats([row["action_selection_rates"].get(name) for row in subset])
                 for name in ACTION_NAMES}
+            group["trajectory_transition_matrix"] = {
+                left: {right: sum(row["trajectory_transition_matrix"][left][right]
+                                  for row in subset) for right in ACTION_NAMES}
+                for left in ACTION_NAMES}
             by_group[f"{driver}:{condition}"] = group
     paired = []
     for driver in DRIVERS:
