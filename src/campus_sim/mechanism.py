@@ -13,9 +13,9 @@ from .domain import (
     memory_context,
     next_mood,
     next_stress,
+    peer_response,
     policy_components,
     policy_context,
-    peer_response,
     residence_context,
     unit,
 )

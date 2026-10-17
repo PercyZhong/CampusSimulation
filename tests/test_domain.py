@@ -10,11 +10,11 @@ from campus_sim.domain import (
     memory_context,
     next_mood,
     next_stress,
+    peer_response,
     policy_components,
     policy_context,
     residence_context,
     unit,
-    peer_response,
 )
 
 
