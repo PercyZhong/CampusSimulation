@@ -88,6 +88,44 @@ def support_window_metrics(events, complete_step, width=3):
     return result
 
 
+def course_exposure_metrics(events):
+    """Describe recorded attendance contexts without inferring missing schedules."""
+    attendance = [event for event in events if event["action"] == "attend"
+                  and event["status"] == "completed"]
+    by_actor = {}
+    for event in attendance:
+        actor = event["actor"]
+        row = by_actor.setdefault(actor, {"attendance_days": set(),
+                                          "recorded_contexts": 0,
+                                          "courses": set(), "venues": set()})
+        row["attendance_days"].add(event["day"])
+        context = event["detail"].get("context")
+        if not isinstance(context, dict) or not all(
+                isinstance(context.get(key), str) and context[key]
+                for key in ("course_id", "venue")):
+            continue
+        row["recorded_contexts"] += 1
+        row["courses"].add(context["course_id"])
+        row["venues"].add(context["venue"])
+    observed = sum(row["recorded_contexts"] for row in by_actor.values())
+    courses = set().union(*(row["courses"] for row in by_actor.values()))
+    venues = set().union(*(row["venues"] for row in by_actor.values()))
+    return {"attendance_events": len(attendance),
+            "context_recorded_events": observed,
+            "context_missing_events": len(attendance) - observed,
+            "unique_courses": len(courses) if observed else None,
+            "unique_venues": len(venues) if observed else None,
+            "students_with_attendance": len(by_actor),
+            "students_with_recorded_context": sum(
+                row["recorded_contexts"] > 0 for row in by_actor.values()),
+            "by_student": {actor: {
+                "attendance_days": len(row["attendance_days"]),
+                "recorded_contexts": row["recorded_contexts"],
+                "unique_courses": len(row["courses"]) if row["recorded_contexts"] else None,
+                "unique_venues": len(row["venues"]) if row["recorded_contexts"] else None}
+                for actor, row in sorted(by_actor.items())}}
+
+
 def interaction_network_metrics(events):
     """Track observed student pairs by day and interaction source."""
     sources = ("peer", "class_contact", "study_group_copresence")
@@ -183,6 +221,7 @@ def summarize(run_dir):
     peer_valid = [e for e in peer_llm if len(e["detail"].get("turns", [])) == 4]
     trajectories = trajectory_metrics(events)
     support_windows = support_window_metrics(events, status["complete"]["step"])
+    course_exposure = course_exposure_metrics(events)
     network = interaction_network_metrics(events)
     peer_partners = {e["detail"].get("partner") for e in peer_events}
     classmate_events = [e for e in events if e["action"] == "attend"
@@ -246,6 +285,7 @@ def summarize(run_dir):
                                              if peer_llm else None),
                **trajectories,
                "support_window_metrics": support_windows,
+               "course_exposure_metrics": course_exposure,
                **network,
                "trajectory_unique_peer_partners": len(peer_partners - {None}),
                "class_attendance_interactions": len(classmate_events),

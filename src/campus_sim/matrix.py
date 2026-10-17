@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .analysis import (
     ACTION_NAMES,
+    course_exposure_metrics,
     interaction_network_metrics,
     support_window_metrics,
     trajectory_metrics,
@@ -53,6 +54,7 @@ def _row(path):
                    if len(event["detail"].get("turns", [])) == 4]
     trajectories = trajectory_metrics(events)
     support_windows = support_window_metrics(events, summary["complete_steps"])
+    course_exposure = course_exposure_metrics(events)
     network = interaction_network_metrics(events)
     row = {"run": path.name, "driver": driver, "condition": condition, "seed": seed,
            "model_provider": summary.get("model_provider"), "model_id": summary.get("model_id"),
@@ -70,6 +72,7 @@ def _row(path):
            "peer_repeat_contact_rate": trajectories["peer_repeat_contact_rate"],
            "trajectory_transition_matrix": trajectories["trajectory_transition_matrix"],
            "support_window_metrics": support_windows,
+           "course_exposure_metrics": course_exposure,
            "interaction_network_unique_edges": network["interaction_network_unique_edges"],
            "interaction_network_edges_by_source": network[
                "interaction_network_edges_by_source"],
@@ -130,6 +133,11 @@ def build_report(root="runs"):
                 else:
                     group["support_window_metrics"][key] = sum(
                         row["support_window_metrics"][key] for row in subset)
+            group["course_exposure_metrics"] = {
+                key: _stats([row["course_exposure_metrics"][key] for row in subset])
+                for key in ("attendance_events", "context_recorded_events",
+                            "context_missing_events", "unique_courses", "unique_venues",
+                            "students_with_attendance", "students_with_recorded_context")}
             by_group[f"{driver}:{condition}"] = group
     paired = []
     for driver in DRIVERS:

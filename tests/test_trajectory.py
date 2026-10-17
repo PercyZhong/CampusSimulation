@@ -2,6 +2,7 @@
 
 from campus_sim.analysis import (
     ACTION_NAMES,
+    course_exposure_metrics,
     interaction_network_metrics,
     support_window_metrics,
     trajectory_metrics,
@@ -102,3 +103,35 @@ def test_support_windows_use_llm_decisions_for_rejected_choices():
     result = support_window_metrics(events, complete_step=4, width=1)
     assert result["request_after_action_counts"]["accept_support"] == 1
     assert result["support_after_eligible_students"] == 0
+
+
+def test_course_exposure_counts_recorded_attendance_contexts():
+    events = [event(1, 1, "s000", "attend", detail={
+                  "context": {"course_id": "course-100", "venue": "building-1"}}),
+              event(2, 2, "s000", "attend", detail={
+                  "context": {"course_id": "course-101", "venue": "building-1"}}),
+              event(3, 2, "s001", "attend", detail={
+                  "context": {"course_id": "course-101", "venue": "building-1"}}),
+              event(4, 3, "s001", "attend"),
+              event(5, 3, "s000", "attend", "rejected")]
+    result = course_exposure_metrics(events)
+    assert result["attendance_events"] == 4
+    assert result["context_recorded_events"] == 3
+    assert result["context_missing_events"] == 1
+    assert result["unique_courses"] == 2
+    assert result["unique_venues"] == 1
+    assert result["students_with_attendance"] == 2
+    assert result["students_with_recorded_context"] == 2
+    assert result["by_student"]["s000"] == {
+        "attendance_days": 2, "recorded_contexts": 2,
+        "unique_courses": 2, "unique_venues": 1}
+    assert result["by_student"]["s001"]["attendance_days"] == 2
+
+
+def test_course_exposure_distinguishes_missing_context_from_zero_attendance():
+    missing = course_exposure_metrics([event(1, 1, "s000", "attend")])
+    empty = course_exposure_metrics([event(1, 1, "s000", "rest")])
+    assert missing["unique_courses"] is None
+    assert missing["context_missing_events"] == 1
+    assert empty["attendance_events"] == 0
+    assert empty["context_missing_events"] == 0
