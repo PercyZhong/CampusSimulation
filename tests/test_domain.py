@@ -69,7 +69,9 @@ def test_academic_context_is_deterministic_and_student_specific():
     first = academic_context(11, 2, "s000")
     assert first == academic_context(11, 2, "s000")
     assert set(first) == {"course_id", "venue", "section"}
-    assert first != academic_context(11, 2, "s001")
+    assert first == academic_context(11, 2, "s001")
+    assert first != academic_context(11, 2, "s005")
+    assert first != academic_context(11, 3, "s000")
 
 
 def test_sustained_workload_retains_stress_range():

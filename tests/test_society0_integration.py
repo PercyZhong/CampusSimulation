@@ -15,7 +15,7 @@ def test_two_day_completed_action_and_export(tmp_path):
     from society0.kernel.observation import Observation
     from society0.kernel.runner import run_plan
 
-    from campus_sim.analysis import export
+    from campus_sim.analysis import export, summarize
     from campus_sim.plan import build
 
     raw = json.loads(Path("configs/baseline.json").read_text(encoding="utf-8"))
@@ -38,6 +38,16 @@ def test_two_day_completed_action_and_export(tmp_path):
     assert export(path)["complete_steps"] == 2
     summary = export(path)
     assert summary["n_staff"] == 2
+    _, _, events = summarize(path)
+    by_actor = {}
+    for event in events:
+        if event["actor"].startswith("s") and event["action"] in {
+                "attend", "rest", "peer", "request", "accept_support"}:
+            by_actor.setdefault(event["actor"], []).append(event["action"])
+    expected_transitions = sum(
+        actions[i] != actions[i - 1]
+        for actions in by_actor.values() for i in range(1, len(actions)))
+    assert summary["trajectory_action_transitions"] == expected_transitions
     assert summary["staff_shift_count"] == raw["end"] * raw["n_staff"]
     assert summary["available_slots_total"] == raw["end"] * raw["capacity"]
     assert -1 <= summary["stress_change_distribution"]["mean"] <= 1
@@ -160,6 +170,41 @@ def test_peer_action_records_partner_dialogue_and_updates_partner(tmp_path):
             assert student["recent_events"][-1]["action"] == "peer"
             assert student["social_memory"][-1]["partner"] == detail["partner"]
             assert partner["social_memory"][-1]["partner"] == "s000"
+
+    asyncio.run(exercise())
+
+
+def test_class_contacts_require_shared_course_and_prior_arrival(tmp_path):
+    import asyncio
+
+    from society0.kernel.composition import compose
+    from society0.kernel.interaction import InteractionScope, Moment, Ref
+
+    from campus_sim.plan import build
+
+    raw = json.loads(Path("configs/baseline.json").read_text(encoding="utf-8"))
+    raw.update(end=1, n_students=6)
+
+    async def exercise():
+        async with compose(tmp_path / "class", build(raw).plugins) as host:
+            actions = host.service("interaction", "actions")
+            for actor in ("s000", "s005", "s001"):
+                with InteractionScope(actor, Moment(1, "decide")) as scope:
+                    result = await actions.bound(scope).invoke(
+                        "campus.attend", Ref("campus", "student", actor), {})
+                    assert result.status == "completed"
+            store = host.service("storage", "store")
+            rows = store.read(lambda view: list(view.iter_query(
+                "SELECT actor,partner,context FROM campus_interactions ORDER BY ordinal")))
+            assert rows[0][1] is None
+            assert rows[1][1] is None
+            assert rows[2][1] == "s000"
+            assert json.loads(rows[2][2]) == json.loads(rows[0][2])
+            details = store.read(lambda view: [json.loads(row[0]) for row in view.iter_query(
+                "SELECT detail FROM campus_events WHERE action='attend' ORDER BY ordinal")])
+            assert [detail["classmate"] for detail in details] == [None, None, "s000"]
+            assert all(detail["contact_rule"] == "same_course_prior_attendance_v1"
+                       for detail in details)
 
     asyncio.run(exercise())
 

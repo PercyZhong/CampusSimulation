@@ -165,12 +165,12 @@ def academic_event(seed, day):
 
 
 def academic_context(seed, day, student_id):
-    """Deterministic course and place context for a student's daily attendance."""
-    course_number = 100 + int(unit(seed, "course", day, student_id) * 8)
-    venue_number = 1 + int(unit(seed, "venue", day, student_id) * 6)
-    return {"course_id": f"course-{course_number}",
-            "venue": f"building-{venue_number}",
-            "section": "A" if unit(seed, "section", day, student_id) < 0.5 else "B"}
+    """Five-student cohorts share a daily course and place."""
+    cohort = int(student_id[1:]) // 5
+    course = 100 + cohort * 4 + (day - 1) % 4
+    venue = 1 + int(unit(seed, "course_venue", course) * 6)
+    return {"course_id": f"course-{course}", "venue": f"building-{venue}",
+            "section": f"S{cohort:02d}"}
 
 
 def next_stress(stress, recovery, load, supported):

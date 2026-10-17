@@ -212,11 +212,15 @@ class Campus:
                                (dumps(partner_state), partner))
             classmate = None
             if action == "attend":
-                nearby = writer.query(
-                    "SELECT id FROM campus_students WHERE id != ? ORDER BY id", (actor,))
-                if nearby:
-                    classmate = nearby[int(unit(self.config.seed, "classmate", day, actor)
-                                       * len(nearby))][0]
+                context = academic_context(self.config.seed, day, actor)
+                arrivals = writer.query(
+                    "SELECT actor,context FROM campus_interactions "
+                    "WHERE day=? AND interaction='class_attendance' ORDER BY actor", (day,))
+                classmates = [sid for sid, encoded in arrivals
+                              if sid != actor and json.loads(encoded) == context]
+                if classmates:
+                    classmate = classmates[int(unit(self.config.seed, "classmate", day, actor)
+                                              * len(classmates))]
             detail = ({"wait_days": wait} if action == "accept_support" else
                       {"partner": partner,
                        "turns": turns if self.config.driver == "llm" else
@@ -232,7 +236,9 @@ class Campus:
                            "usage": args["usage"]} if self.config.driver == "llm" else {})}
                       if action == "peer" else
                       {"context": academic_context(self.config.seed, day, actor),
-                       "classmate": classmate} if action == "attend" else None)
+                       "classmate": classmate,
+                       "contact_rule": "same_course_prior_attendance_v1"}
+                      if action == "attend" else None)
             memory = {"day": day, "action": action, "status": "completed"}
             if action == "peer":
                 memory["partner"] = partner

@@ -59,11 +59,30 @@ def summarize(run_dir):
     peer_events = [e for e in events if e["action"] == "peer" and e["status"] == "completed"]
     peer_llm = [e for e in peer_events if e["detail"].get("backend") == "llm"]
     peer_valid = [e for e in peer_llm if len(e["detail"].get("turns", [])) == 4]
-    trajectory = [e["detail"].get("action") for e in decisions]
-    transitions = sum(left != right for left, right in itertools.pairwise(trajectory))
+    actions_by_actor = {}
+    source = decisions if decisions else [e for e in events if e["action"] in ACTION_NAMES
+                                         and e["status"] in {"completed", "rejected"}]
+    for event in source:
+        actions_by_actor.setdefault(event["actor"], []).append(
+            (event["day"], event["ordinal"], event["detail"].get("action", event["action"])))
+    transitions = sum(
+        left[2] != right[2]
+        for items in actions_by_actor.values()
+        for left, right in itertools.pairwise(sorted(items)))
     peer_partners = {e["detail"].get("partner") for e in peer_events}
     classmate_events = [e for e in events if e["action"] == "attend"
                         and e["status"] == "completed" and e["detail"].get("classmate")]
+    current_contacts = [e for e in classmate_events if e["detail"].get("contact_rule")
+                        == "same_course_prior_attendance_v1"]
+    invalid_contacts = [e for e in current_contacts if e["detail"]["classmate"] == e["actor"]]
+    if invalid_contacts:
+        raise ValueError("class attendance contains self contact")
+    attendance = {(e["day"], e["actor"]): (e["ordinal"], e["detail"].get("context"))
+                  for e in events if e["action"] == "attend" and e["status"] == "completed"}
+    if any((partner := attendance.get((e["day"], e["detail"]["classmate"]))) is None
+           or partner[0] >= e["ordinal"] or partner[1] != e["detail"]["context"]
+           for e in current_contacts):
+        raise ValueError("class contact lacks same-day shared attendance")
     recorded_model_calls = sum(
         e["action"] == "model_decision" or
         (e["action"] == "peer" and e["status"] == "completed"
