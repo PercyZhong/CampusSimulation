@@ -68,6 +68,9 @@ def build(raw):
                          for event in state["recent_events"]),
                      "social_memory_count": len(state["social_memory"]),
                      "scenario": scenario_context(config.seed, session.moment.time, state),
+                     "long_term_state": {key: state[key] for key in (
+                         "academic_engagement", "self_efficacy", "belonging",
+                         "help_seeking_belief", "social_avoidance")},
                  },
                  "policy": policy, "usage": usage})
         args = {}

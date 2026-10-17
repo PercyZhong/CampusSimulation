@@ -456,6 +456,11 @@ def summarize(run_dir):
                                                if relationship_strengths else None),
                "scenario_trigger_events": sum(e["action"] == "scenario_trigger"
                                                for e in events),
+               "long_term_state_means": {
+                   key: (sum(s[key] for s in students) / n
+                         if all(key in s for s in students) else None)
+                   for key in ("academic_engagement", "self_efficacy", "belonging",
+                               "help_seeking_belief", "social_avoidance")},
                **trajectories,
                "support_window_metrics": support_windows,
                "support_recovery_metrics": recovery,

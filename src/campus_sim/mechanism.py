@@ -165,7 +165,9 @@ class Campus:
             if not rows:
                 return {"status": "rejected", "reason": "unknown_actor"}
             state = json.loads(rows[0][0])
-            before = {key: state[key] for key in ("stress", "mood", "recovery", "connection")}
+            before = {key: state[key] for key in ("stress", "mood", "recovery", "connection",
+                                                   "academic_engagement", "self_efficacy",
+                                                   "belonging", "help_seeking_belief", "social_avoidance")}
             reason = None
             if action == "request" and state["pending_day"] is not None:
                 reason = "already_pending"
@@ -205,6 +207,7 @@ class Campus:
                 writer.execute("INSERT INTO campus_queue VALUES(?,?,?)", (actor, day, ordinal))
                 state["pending_day"] = day
                 state["ever_requested"] = True
+                state["help_seeking_belief"] = clamp(state["help_seeking_belief"] + 0.04)
             elif action == "accept_support":
                 wait = day - state["pending_day"]
                 state["pending_day"] = None
@@ -253,8 +256,12 @@ class Campus:
                                 strength, day, contacts))
                 state["connection"] = clamp(state["connection"] + 0.045)
                 state["mood"] = clamp(state["mood"] + 0.02)
+                state["belonging"] = clamp(state["belonging"] + 0.025)
+                state["social_avoidance"] = clamp(state["social_avoidance"] - 0.02)
             elif action == "attend":
                 state["willingness"] = clamp(state["willingness"] + 0.005)
+                state["academic_engagement"] = clamp(state["academic_engagement"] + 0.012)
+                state["self_efficacy"] = clamp(state["self_efficacy"] + 0.006)
             else:
                 reason = "unknown_action"
                 self.event(writer, day, actor, action, "rejected", reason)
@@ -442,11 +449,27 @@ class Campus:
                                           state["recovery"], state["connection"] >= 0.3)
                 state["recovery"] = clamp(state["recovery"] - 0.025)
                 state["connection"] = clamp(state["connection"] - 0.012)
+                state["academic_engagement"] = clamp(state["academic_engagement"] +
+                                                      (0.004 if state["recent_events"] and
+                                                       state["recent_events"][-1].get("action") == "attend" else -0.003))
+                state["self_efficacy"] = clamp(state["self_efficacy"] +
+                                                (0.002 if state["academic_engagement"] >= 0.5 else -0.002))
+                state["belonging"] = clamp(state["belonging"] +
+                                            (0.003 if state["connection"] >= 0.3 else -0.004))
+                state["help_seeking_belief"] = clamp(state["help_seeking_belief"] +
+                                                      (0.004 if state["supported"] else -0.001))
+                state["social_avoidance"] = clamp(state["social_avoidance"] +
+                                                   (0.004 if state["connection"] < 0.3 else -0.002))
                 state["low_streak"] = state["low_streak"] + 1 if state["connection"] < 0.3 else 0
                 writer.execute("UPDATE campus_students SET body=? WHERE id=?", (dumps(state), actor))
                 self.event(writer, day, actor, "student_state", "completed", detail={
                     "phase": "end_of_day_v1", "stress": state["stress"],
                     "mood": state["mood"], "connection": state["connection"],
+                    "academic_engagement": state["academic_engagement"],
+                    "self_efficacy": state["self_efficacy"],
+                    "belonging": state["belonging"],
+                    "help_seeking_belief": state["help_seeking_belief"],
+                    "social_avoidance": state["social_avoidance"],
                     "supported": state["supported"]})
                 states.append(state)
             rel_decay = 0
@@ -467,6 +490,10 @@ class Campus:
                 "low_connection_7d": sum(s["low_streak"] >= 7 for s in states),
                 "mean_stress": round(sum(s["stress"] for s in states) / len(states), 6),
                 "mean_mood": round(sum(s["mood"] for s in states) / len(states), 6),
+                "long_term_state_means": {key: round(sum(s[key] for s in states) / len(states), 6)
+                                          for key in ("academic_engagement", "self_efficacy",
+                                                      "belonging", "help_seeking_belief",
+                                                      "social_avoidance")},
                 "mean_stress_change": round(sum(s["stress"] - s["initial_stress"]
                                                  for s in states) / len(states), 6),
                 "mean_stress_before": round(sum(s["stress"] for s in before_states) / len(states), 6),
@@ -531,6 +558,8 @@ class CampusInformation:
         elif ref.kind == "student":
             state = self.campus.student(ref.key)
             data = {key: state[key] for key in ("id", "stress", "mood", "recovery", "connection", "willingness",
+                                                  "academic_engagement", "self_efficacy", "belonging",
+                                                  "help_seeking_belief", "social_avoidance",
                                                   "supported", "pending_day", "outreach_seen", "recent_events",
                                                   "social_memory", "supported_day", "follow_up_sent")}
             data["memory_context"] = {
