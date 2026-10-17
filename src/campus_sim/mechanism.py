@@ -29,6 +29,8 @@ SCHEMA = (
     ("CREATE TABLE campus_staff_shifts(day INTEGER NOT NULL,actor TEXT NOT NULL,"
      "slots INTEGER NOT NULL,PRIMARY KEY(day,actor))"),
     "CREATE TABLE campus_edges(a TEXT NOT NULL,b TEXT NOT NULL,PRIMARY KEY(a,b))",
+    ("CREATE TABLE campus_relationships(a TEXT NOT NULL,b TEXT NOT NULL,strength REAL NOT NULL,"
+     "first_day INTEGER,last_day INTEGER,contacts INTEGER NOT NULL,PRIMARY KEY(a,b))"),
     "CREATE TABLE campus_queue(actor TEXT NOT NULL PRIMARY KEY, requested_day INTEGER NOT NULL, ordinal INTEGER NOT NULL UNIQUE)",
     "CREATE TABLE campus_service_usage(day INTEGER PRIMARY KEY, used INTEGER NOT NULL)",
     "CREATE TABLE campus_follow_up_usage(day INTEGER PRIMARY KEY, used INTEGER NOT NULL)",
@@ -227,6 +229,19 @@ class Campus:
                     self.event(writer, day, actor, "peer", "rejected", response,
                                detail={"partner": partner, "partner_response": response})
                     return {"status": "rejected", "reason": response}
+                left, right = sorted((actor, partner))
+                rel = writer.query("SELECT strength,first_day,last_day,contacts FROM campus_relationships "
+                                   "WHERE a=? AND b=?", (left, right))
+                if rel:
+                    strength, first_day, _, contacts = rel[0]
+                    contacts += 1
+                    strength = clamp(strength + 0.08)
+                else:
+                    strength, first_day, contacts = 0.58, day, 1
+                writer.execute("INSERT INTO campus_relationships VALUES(?,?,?,?,?,?) "
+                               "ON CONFLICT(a,b) DO UPDATE SET strength=?,last_day=?,contacts=?",
+                               (left, right, strength, first_day, day, contacts,
+                                strength, day, contacts))
                 state["connection"] = clamp(state["connection"] + 0.045)
                 state["mood"] = clamp(state["mood"] + 0.02)
             elif action == "attend":
@@ -276,6 +291,8 @@ class Campus:
                 detail["response_basis"] = "partner_edge_and_dialogue_completed_v1"
                 detail["partner_state_before"] = {
                     key: partner_state[key] for key in ("mood", "connection", "stress")}
+                detail["relationship"] = {"first_day": first_day, "last_day": day,
+                                           "contacts": contacts, "strength": strength}
             memory = {"day": day, "action": action, "status": "completed"}
             if action == "peer":
                 memory["partner"] = partner
@@ -423,6 +440,15 @@ class Campus:
                     "mood": state["mood"], "connection": state["connection"],
                     "supported": state["supported"]})
                 states.append(state)
+            rel_decay = 0
+            for left, right, strength, first_day, last_day, contacts in writer.iter_query(
+                    "SELECT a,b,strength,first_day,last_day,contacts FROM campus_relationships"):
+                if day > last_day + 1:
+                    updated = clamp(strength - 0.02 * (day - last_day - 1))
+                    if updated != strength:
+                        rel_decay += 1
+                        writer.execute("UPDATE campus_relationships SET strength=? WHERE a=? AND b=?",
+                                       (updated, left, right))
             metrics = {
                 "day": day, "academic_load": load, "requested": sum(s["ever_requested"] for s in states),
                 "supported": sum(s["ever_supported"] for s in states), "served_today": served,
@@ -440,6 +466,7 @@ class Campus:
                                                 for s, b in zip(states, before_states)) / len(states), 6),
                 "mean_mood_delta": round(sum(s["mood"] - b["mood"]
                                               for s, b in zip(states, before_states)) / len(states), 6),
+                "relationship_decay_updates": rel_decay,
             }
             writer.execute("INSERT INTO campus_days VALUES(?,?)", (day, dumps(metrics)))
             return metrics
@@ -527,6 +554,9 @@ def campus_plugin(config):
             writer.execute("INSERT INTO campus_staff VALUES(?,?)", (member["id"], dumps(member)))
         for a, b in edges:
             writer.execute("INSERT OR IGNORE INTO campus_edges VALUES(?,?)", (a, b))
+            left, right = sorted((a, b))
+            writer.execute("INSERT OR IGNORE INTO campus_relationships VALUES(?,?,?,?,?,?)",
+                           (left, right, 0.5, None, None, 0))
     def install(context):
         campus = Campus(context.require("storage", "store"), config)
         information = context.require("interaction", "information")
@@ -547,7 +577,7 @@ def campus_plugin(config):
             actions.register(Action("campus." + name, ("campus", "student"), name, action_schema,
                 lambda scope, target, args, name=name: campus.act(scope, target, name, args),
                 available=lambda scope, target: target.key == scope.actor),
-                dependencies=("campus_students", "campus_queue", "campus_edges", "campus_service_usage", "campus_follow_up_usage", "campus_interactions"))
+                dependencies=("campus_students", "campus_queue", "campus_edges", "campus_relationships", "campus_service_usage", "campus_follow_up_usage", "campus_interactions"))
         actions.register(Action("campus.staff_shift", ("campus", "staff"), "staff_shift", schema,
             lambda scope, target, args: campus.staff_shift(scope, target),
             available=lambda scope, target: target.key == scope.actor),

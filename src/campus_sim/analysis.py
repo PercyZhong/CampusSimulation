@@ -346,6 +346,13 @@ def summarize(run_dir):
     recovery = support_recovery_metrics(events, status["complete"]["step"])
     course_exposure = course_exposure_metrics(events)
     network = interaction_network_metrics(events)
+    relationships = Counter()
+    relationship_strengths = []
+    for event in peer_events:
+        rel = event["detail"].get("relationship") or {}
+        if rel:
+            relationships["formed" if rel.get("contacts") == 1 else "repeated"] += 1
+            relationship_strengths.append(rel.get("strength", 0))
     peer_partners = {e["detail"].get("partner") for e in peer_events}
     classmate_events = [e for e in events if e["action"] == "attend"
                         and e["status"] == "completed" and e["detail"].get("classmate")]
@@ -442,6 +449,11 @@ def summarize(run_dir):
                                         if peer_responses else None),
                "peer_dialogue_completion_rate": (len(peer_events) / len(peer_invitations)
                                                   if peer_invitations else None),
+               "relationship_contacts_formed": relationships["formed"],
+               "relationship_repeat_contacts": relationships["repeated"],
+               "relationship_mean_strength": (sum(relationship_strengths) /
+                                               len(relationship_strengths)
+                                               if relationship_strengths else None),
                **trajectories,
                "support_window_metrics": support_windows,
                "support_recovery_metrics": recovery,
