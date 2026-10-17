@@ -126,6 +126,91 @@ def trajectory_metrics(events):
                                          if peer_pairs else None)}
 
 
+def trajectory_profiles(events, students, complete_step, window_days=7):
+    """Classify observed recent paths without inventing unrecorded contact."""
+    start = max(1, complete_step - window_days + 1)
+    window = [event for event in events if start <= event["day"] <= complete_step]
+    social_kinds = {"peer_dialogue", "class_attendance", "study_group_copresence",
+                    "residence_presence", "club_copresence"}
+    contacts = defaultdict(set)
+    for record in interaction_records(window):
+        if record["kind"] not in social_kinds or record["status"] != "completed":
+            continue
+        if len(set(record["participants"])) < 2:
+            continue
+        for actor in record["participants"]:
+            contacts[actor].add(record["day"])
+    snapshots = defaultdict(set)
+    scheduled = defaultdict(set)
+    missed = defaultdict(set)
+    invitations = defaultdict(set)
+    invitation_opportunities = defaultdict(set)
+    requests = defaultdict(set)
+    for event in window:
+        actor, day, action = event["actor"], event["day"], event["action"]
+        if action == "student_state" and event["status"] == "completed":
+            snapshots[actor].add(day)
+        if action in {"attend", "course_absence"} and event["status"] == "completed":
+            scheduled[actor].add(day)
+        if action == "course_absence" and event["status"] == "completed":
+            missed[actor].add(day)
+        if action == "peer_invitation" and event["status"] == "completed":
+            invitations[actor].add(day)
+            invitation_opportunities[actor].add(day)
+            partner = event["detail"].get("partner")
+            if partner:
+                invitation_opportunities[partner].add(day)
+    for actor, day, _, action in selected_actions(window):
+        if action == "request":
+            requests[actor].add(day)
+    complete_window = complete_step >= window_days
+    by_student = {}
+    types = Counter()
+    isolation = Counter()
+    for student in sorted(students, key=lambda row: row["id"]):
+        actor = student["id"]
+        observed_days = len(snapshots[actor])
+        eligible = complete_window and observed_days == window_days
+        opportunity_days = scheduled[actor] | invitation_opportunities[actor]
+        contact_days = len(contacts[actor])
+        if not eligible:
+            kind = "insufficient_observation"
+            isolation_status = "insufficient_observation"
+        else:
+            if contact_days == 0:
+                isolation_status = ("no_contact_despite_opportunity" if opportunity_days
+                                    else "no_observed_opportunity")
+            else:
+                isolation_status = "contact_observed"
+            if len(missed[actor]) >= 3:
+                kind = "persistent_absence"
+            elif len(requests[actor]) >= 2:
+                kind = "repeated_help_attempts"
+            elif contact_days == 0:
+                kind = "no_social_contact"
+            else:
+                kind = "mixed_or_connected"
+        row = {"student_id": actor, "window_start": start, "window_end": complete_step,
+               "observed_snapshot_days": observed_days,
+               "scheduled_course_days": len(scheduled[actor]),
+               "missed_course_days": len(missed[actor]),
+               "peer_invitation_days": len(invitations[actor]),
+               "social_opportunity_days": len(opportunity_days),
+               "social_contact_days": contact_days,
+               "request_attempt_days": len(requests[actor]),
+               "trajectory_type": kind, "isolation_status": isolation_status}
+        by_student[actor] = row
+        types[kind] += 1
+        isolation[isolation_status] += 1
+    return {"window_days": window_days, "window_start": start,
+            "window_end": complete_step, "eligible_students": sum(
+                row["trajectory_type"] != "insufficient_observation"
+                for row in by_student.values()),
+            "trajectory_type_counts": dict(types),
+            "isolation_status_counts": dict(isolation),
+            "by_student": by_student}
+
+
 def support_window_metrics(events, complete_step, width=3):
     """Describe selected actions around first completed request and support events."""
     paths = {}
@@ -395,6 +480,7 @@ def summarize(run_dir):
     peer_llm = [e for e in peer_events if e["detail"].get("backend") == "llm"]
     peer_valid = [e for e in peer_llm if len(e["detail"].get("turns", [])) == 4]
     trajectories = trajectory_metrics(events)
+    profiles = trajectory_profiles(events, students, status["complete"]["step"])
     support_windows = support_window_metrics(events, status["complete"]["step"])
     recovery = support_recovery_metrics(events, status["complete"]["step"])
     course_exposure = course_exposure_metrics(events)
@@ -541,6 +627,8 @@ def summarize(run_dir):
                        "partners", {})) for s in students),
                    "action_counts": dict(memory_actions)},
                **trajectories,
+               "trajectory_profiles": {key: value for key, value in profiles.items()
+                                       if key != "by_student"},
                "support_window_metrics": support_windows,
                "support_recovery_metrics": recovery,
                "course_exposure_metrics": course_exposure,
@@ -601,6 +689,11 @@ def export(run_dir):
     with (output / "interactions.jsonl").open("w", encoding="utf-8") as stream:
         for record in interaction_records(events):
             stream.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+    _, _, _, students, _ = _read(run_dir)
+    profiles = trajectory_profiles(events, students, summary["complete_steps"])
+    with (output / "trajectory_profiles.jsonl").open("w", encoding="utf-8") as stream:
+        for row in profiles["by_student"].values():
+            stream.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
     return summary
 
 

@@ -11,6 +11,7 @@ from campus_sim.analysis import (
     support_recovery_metrics,
     support_window_metrics,
     trajectory_metrics,
+    trajectory_profiles,
 )
 
 
@@ -53,6 +54,42 @@ def test_llm_paths_use_decisions_and_empty_peer_rate_is_undefined():
     assert result["trajectory_observed_students"] == 2
     assert result["peer_repeat_contact_rate"] is None
     assert set(result["trajectory_transition_matrix"]) == set(ACTION_NAMES)
+
+
+def test_trajectory_profiles_separate_opportunity_contact_and_censoring():
+    students = [{"id": f"s{number:03d}"} for number in range(6)]
+    events = []
+    ordinal = 0
+    for day in range(1, 8):
+        for actor in ("s000", "s001", "s002", "s003", "s005"):
+            ordinal += 1
+            events.append(event(ordinal, day, actor, "student_state"))
+    for day in (1, 2, 3):
+        ordinal += 1
+        events.append(event(ordinal, day, "s000", "course_absence"))
+    ordinal += 1
+    events.append(event(ordinal, 1, "s001", "course_absence"))
+    for day in (2, 4):
+        ordinal += 1
+        events.append(event(ordinal, day, "s001", "request"))
+    ordinal += 1
+    events.append(event(ordinal, 3, "s002", "peer_invitation", detail={
+        "partner": "s003"}))
+    ordinal += 1
+    events.append(event(ordinal, 5, "s003", "peer", detail={"partner": "s004"}))
+    profiles = trajectory_profiles(events, students, complete_step=7)
+    rows = profiles["by_student"]
+    assert profiles["eligible_students"] == 5
+    assert rows["s000"]["trajectory_type"] == "persistent_absence"
+    assert rows["s000"]["isolation_status"] == "no_contact_despite_opportunity"
+    assert rows["s001"]["trajectory_type"] == "repeated_help_attempts"
+    assert rows["s002"]["trajectory_type"] == "no_social_contact"
+    assert rows["s002"]["social_opportunity_days"] == 1
+    assert rows["s003"]["isolation_status"] == "contact_observed"
+    assert rows["s004"]["trajectory_type"] == "insufficient_observation"
+    assert rows["s005"]["isolation_status"] == "no_observed_opportunity"
+    assert trajectory_profiles(events, students, complete_step=6)[
+        "eligible_students"] == 0
 
 
 def test_interaction_network_tracks_new_edges_and_repeated_contacts():

@@ -42,6 +42,10 @@ def test_two_day_completed_action_and_export(tmp_path):
     assert all({"day", "ordinal", "actor", "participants", "kind", "venue",
                 "response", "outcome"} <= record.keys() for record in interactions)
     assert summary["n_staff"] == 2
+    profiles = [json.loads(line) for line in
+                (path / "trajectory_profiles.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert len(profiles) == raw["n_students"]
+    assert all(row["trajectory_type"] == "insufficient_observation" for row in profiles)
     _, _, events = summarize(path)
     snapshots = [event for event in events if event["action"] == "student_state"]
     assert len(snapshots) == raw["end"] * raw["n_students"]
