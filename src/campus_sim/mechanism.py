@@ -550,12 +550,12 @@ class Campus:
                     "supported": state["supported"]})
                 states.append(state)
             rel_decay = 0
-            for left, right, strength, first_day, last_day, contacts, relationship_type in writer.iter_query(
+            for left, right, strength, first_day, last_day, contacts, relation_kind in writer.iter_query(
                     "SELECT a,b,strength,first_day,last_day,contacts,relationship_type FROM campus_relationships"):
                 if last_day is not None and day > last_day + 1:
                     decay = {"roommate": 0.012, "club_member": 0.018,
                              "study_partner": 0.02, "friend": 0.015,
-                             "acquaintance": 0.025}.get(relationship_type, 0.025)
+                             "acquaintance": 0.025}.get(relation_kind, 0.025)
                     updated = clamp(strength - decay * (day - last_day - 1))
                     if updated != strength:
                         rel_decay += 1
