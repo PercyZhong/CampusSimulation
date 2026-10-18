@@ -732,8 +732,9 @@ def export(run_dir):
 def trajectory_report(run_dir):
     """Write JSON and a dependency-free HTML trajectory review artifact."""
     output = Path(run_dir)
-    summary, _, events, students, _ = _read(output)
-    assessment = trajectory_assessment(events, students, summary["complete_steps"])
+    status, _, events, students, _ = _read(output)
+    complete_step = status["complete"]["step"]
+    assessment = trajectory_assessment(events, students, complete_step)
     (output / "trajectory-assessment.json").write_text(
         json.dumps(assessment, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     payload = json.dumps(assessment, ensure_ascii=False).replace("</", "<\\/")
