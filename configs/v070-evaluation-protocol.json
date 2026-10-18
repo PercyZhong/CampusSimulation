@@ -1,6 +1,6 @@
-﻿{
+{
   "protocol_id": "v070-trajectory-matrix-v1",
-  "behavior_git": "1d4a20e2d54204ecd1b957d3315edd29121f7bbe",
+  "behavior_git": "ca8fb1785e6bfb703115d4957c607f0cacbefae0",
   "days": 10,
   "n_students": 40,
   "n_staff": 2,
@@ -18,4 +18,3 @@
   "secondary_metrics": ["trajectory_type_counts", "isolation_status_counts", "action_counts", "network_calls", "completed_wait_mean_days"],
   "comparison": "Within driver and seed, condition minus baseline. Report three-seed mean and sample standard deviation; descriptive only."
 }
-
