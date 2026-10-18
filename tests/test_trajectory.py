@@ -10,8 +10,8 @@ from campus_sim.analysis import (
     interaction_records,
     support_recovery_metrics,
     support_window_metrics,
-    trajectory_metrics,
     trajectory_assessment,
+    trajectory_metrics,
     trajectory_profiles,
 )
 
