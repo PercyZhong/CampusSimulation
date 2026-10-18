@@ -1,100 +1,112 @@
 # CampusSimulation
 
-## 本地平台（0.5.0 政策实验开发版）
+基于 Society0 的校园学生行为模拟项目。项目模拟学生的课程、求助、同伴互动、宿舍与社团接触、关系变化、长期状态和行为轨迹，并支持规则驱动、Qwen 和 DeepSeek 三种决策驱动。
 
-0.4.0 开发树加入学生 LLM 行动决策。实验者可在 Web 工作台选择离线规则或 DeepSeek、Qwen、OpenAI GPT、Gemini、Anthropic Claude 的 API，并可填写提供商支持的其他模型 ID。Claude Code 使用的 Claude 模型在这里通过 Anthropic API 调用；Claude Code 订阅本身不是 API 密钥。辅导员值班和服务资格、排队、容量继续由确定性校园规则执行。
+> 当前结果是未校准的模型内部场景结果，不用于临床诊断、个体风险判断或现实政策因果结论。
 
-后续政策实验版把每个条件的公开信息和当日可用行动写入 `policy` 决策上下文，并随每条 `model_decision` 事件保存。基线保留原求助门槛；`easier_access` 降低有效门槛；`outreach` 在信息实际送达后提高当日出现求助机会的概率。三种条件使用同一命名随机流来生成机会，便于配对比较。模型在可用行动中选择，温度可通过 `--temperature` 或 Web 页面调整。以上参数仍是未经校准的实验假设；代码只能保证政策输入和机会机制不同，不能保证三条件的最终结果必然不同。
+## 当前版本
 
-启动 Web 服务前，在 Linux 终端为所选提供商设置环境变量：DeepSeek 使用 `DEEPSEEK_API_KEY`，Qwen 使用 `DASHSCOPE_API_KEY`，OpenAI 使用 `OPENAI_API_KEY`，Gemini 使用 `GEMINI_API_KEY`，Anthropic 使用 `ANTHROPIC_API_KEY`。不要把密钥写入配置文件、命令行或 Git。Qwen 适配器使用阿里云百炼中国站兼容接口；其他地域或自定义网关需要另行配置适配器。Web 页面会显示密钥是否已配置，但不显示密钥值。模型建议列表只是示例，具体 ID 和 API 权限以各提供商账户为准。
+当前主线已完成 V070 定向外展修复与多驱动评估：
 
-命令行示例（DeepSeek 两天、40 名学生，最多 80 次 API 调用）：
+- 10 天模拟，40 名学生，2 名职员；
+- 四个条件：`baseline`、`outreach`、`easier_access`、`targeted_outreach`；
+- 三个种子：11、22、33；
+- 每种驱动 12 组运行；
+- 行为轨迹窗口为末尾 7 个完整日；
+- 输出轨迹分型、孤立指标、行动选择、关系网络和干预指标；
+- 当前已完成规则、Qwen、DeepSeek 三种驱动的 V070 矩阵；
+- V070 修复了定向外展决策阶段缺少 `initial_group` 的问题；
+- 模型响应解析支持附加文本，并对不可用行动进行安全回退。
 
-```bash
-python -m campus_sim.cli run --config configs/baseline.json --days 2 --output runs/llm-deepseek-smoke --provider deepseek --model deepseek-chat --max-model-calls 80
-```
+评估协议见 [docs/V070_TARGETED_OUTREACH_FIX.md](docs/V070_TARGETED_OUTREACH_FIX.md) 和 [configs/v070-evaluation-protocol.json](configs/v070-evaluation-protocol.json)。
 
-每名学生每天至少需要一次行动决策请求；在 LLM 运行中，每次选择 `peer` 还会使用同一模型生成一次四轮对话。程序在运行前检查调用上限是否达到 `学生数 × 天数`，实际运行需为可能发生的 `peer` 对话和 TLS 重试预留额度。10 天、40 名学生最多需要 800 次成功调用，再加重试余量；3×3 批量实验有 9 个独立运行，上限按每个运行计算。达到调用上限或 API 返回错误会使运行失败，避免悄悄改用规则行动。LLM 输出的行动仍会经过 Society0 校园插件校验；运行事件记录提供商、模型、动作和提供商返回的用量字段，密钥和完整模型回复不写入事件。`network_calls` 和 `paid_model_calls` 在汇总中统计已记录的成功决策及完成的 LLM 对话，失败请求及 TLS 重试可能未计入。模型生成仍有随机性，即使将温度设为零，也不能据此假定跨次运行逐项一致。DeepSeek 与 Qwen 已完成小规模真实 API 验收，详见 [0.4.0 验收进度](docs/V040_ACCEPTANCE.md)。
+## 安装
 
-当前开发树包含本地 Web 工作台、合成辅导员值班行动、独立情绪变量、压力前后变化指标和可替换的离线语言层。0.3.0 的 Linux 规则实验、恢复与 Web 筛选技术验收见 [0.3.0 验收记录](docs/V030_ACCEPTANCE.md)；[0.2.0 验收记录](docs/V020_ACCEPTANCE.md)对应旧规则。`docs/EXAMPLE_RESULT.json` 与 `docs/LINUX_ACCEPTANCE.md` 仅对应 0.1.0 规则场景。
-
-在 Linux 的 Python 3.12 环境安装本仓库后，从仓库根目录启动：
+项目要求 Linux/macOS、Python 3.12+。在项目根目录执行：
 
 ```bash
 python -m pip install -e '.[dev]'
 python -m pytest -q
 python -m ruff check src tests
-python -m campus_sim.cli web --output runs/workbench --port 8765
+git diff --check
 ```
 
-工作台监听 `127.0.0.1:8765`，可启动单次或 3×3 批量运行，并查看已完成运行的逐日平均压力和条件汇总。远程 VS Code 可使用端口转发访问；不要将该无身份认证的开发服务绑定到公网。每次运行使用新目录，结果保存在被 Git 忽略的 `runs/workbench/`。规则驱动运行仍使用可复现的离线同伴交流文本；LLM 驱动运行由配置的模型生成 `peer` 四轮文本。`language_backend` 仍仅接受 `offline`，用于规则驱动的语言层；对话文本不控制行动资格、服务队列或容量。
+Society0 依赖锁定在 `pyproject.toml` 中的固定提交。
 
-工作台还可按模拟日与行动类型筛选已导出的行动轨迹，每页显示 50 条。该功能只读取 `events.jsonl`，不重新执行主体决策；输入只能选择合成运行目录。Linux 接口与浏览器筛选已验收。
+## API key
 
-0.3.0 让合成辅导员作为 Society0 规则主体，在学生行动前登记当日值班；服务容量按已登记槽位与配置上限共同约束。新规则已在独立目录重跑 3×3 实验与恢复验收。先前 0.2.0 的归档只对应旧规则。
-
-0.2.0 的合成辅导员只作为服务资源名册，尚不作为会决策的 Society0 主体；每人最多提供 3 个容量槽，配置容量不得超过总槽数。`mood` 是模型内部情绪变量，不是心理量表。新的压力变化指标是最终压力减初始压力。新版本参数、服务规则和语言模板仍待校园专业人员审阅。
-
-复跑时使用**新输出目录**。本轮执行过的命令与结果详见 0.2.0 验收记录：
+API key 只设置在当前 Linux 终端环境中，不要写入配置文件、README 或 Git：
 
 ```bash
-python -m campus_sim.cli run --config configs/baseline.json --days 2 --output runs/v020-smoke-2d
-python -m campus_sim.cli batch --configs configs --output runs/v020-experiment
-python -m campus_sim.cli run --config configs/baseline.json --seed 11 --output runs/v020-resumed-baseline --source runs/v020-experiment/baseline-seed11 --step 15
-python -m campus_sim.cli verify-resume runs/v020-experiment/baseline-seed11 runs/v020-resumed-baseline
+read -r -s -p "请输入 Qwen API key: " DASHSCOPE_API_KEY; echo
+export DASHSCOPE_API_KEY
+read -r -s -p "请输入 DeepSeek API key: " DEEPSEEK_API_KEY; echo
+export DEEPSEEK_API_KEY
 ```
 
-基于 Society0 固定提交 `6ba4a6284a8830491cf326fe9840c48c96c742fb` 的合成校园规则场景。所有 ID 与状态都是虚构模型变量。输出仅称为**未校准的模型内情景结果**，不能用于真实学生诊断、个体自杀风险判断或实际干预效果评估。
+Qwen 使用 `DASHSCOPE_API_KEY`，DeepSeek 使用 `DEEPSEEK_API_KEY`。
 
-## 环境与安装
+## 单次运行
 
-Society0 的正式运行合同面向 Linux/macOS 和 Python 3.12+。在 Linux **本地磁盘**目录执行；也可使用独立的 Python 3.12 Conda 环境：
+规则驱动示例：
 
 ```bash
-python3.12 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -e '.[dev]'
-python -m pytest -q
+python -m campus_sim.cli run \
+  --config configs/baseline.json \
+  --days 10 --seed 11 \
+  --output runs/example-rule-10d
 ```
 
-`pyproject.toml` 把引擎直接依赖锁在上述完整 SHA。没有 API 密钥、HTTP 模型请求或付费模型。运行目录 `runs/`、`.env` 和 `.venv/` 已被 Git 忽略。
-
-## 最小运行与实验
-
-先在 Linux 做两天烟测，命令由固定提交的 `runner-contract.md` 与 `rule_run.py` 核对。以下命令已在 Ubuntu 20.04.6 / Python 3.12.14 实测；重跑时须更换 `--output` 目录：
+Qwen 或 DeepSeek 示例：
 
 ```bash
-python -m campus_sim.cli run --config configs/baseline.json --days 2 --output runs/smoke-2d
-python -m campus_sim.cli batch --configs configs --output runs/experiment
+python -m campus_sim.cli run \
+  --config configs/baseline.json \
+  --days 10 --seed 11 \
+  --output runs/example-qwen-10d \
+  --provider qwen --model qwen-plus --max-model-calls 900
 ```
 
-批处理生成 3 条件 × 3 种子（11、22、33）的 9 个独立目录，每个 40 名合成主体、30 天。也可直接使用引擎入口：
+每次运行应使用新的输出目录。主要输出包括 `summary.json`、`events.jsonl`、`daily_metrics.csv`、`trajectory_profiles.jsonl` 和 `interactions.jsonl`。
+
+## V070 多种子矩阵
+
+运行一个驱动的 12 组矩阵：
 
 ```bash
-python -m society0.kernel.runner --factory campus_sim.plan:build --config configs/baseline.json --output runs/direct-baseline
-python -m campus_sim.cli export runs/direct-baseline
+python -m campus_sim.cli matrix-run-v070 --root runs --driver rule
+python -m campus_sim.cli matrix-report-v070 --root runs --driver rule
 ```
 
-每个成功导出的目录有 `summary.json`、`daily_metrics.csv`、`events.jsonl`；批处理还有 `comparison.json`。汇总包含原始计数、分母、已完成请求的等待时间、未完成请求数、初始分层和三个种子的均值与范围。导出只读 Society0 `Observation` 的已完成步骤和权威 SQL 事实，失败目录会标记诊断状态。不会重新运行规则决策。
+模型驱动只需将 `rule` 替换为 `qwen` 或 `deepseek`。报告文件为 `runs/v070-matrix-{driver}-report.json`，包含每个条件的三种子均值、样本标准差，以及相对 `baseline` 的同种子配对差。
 
-[真实 Linux 运行示例](docs/EXAMPLE_RESULT.json)从 baseline/seed 11 的 `summary.json` 原样复制。修正压力规则后的 9 个实验及恢复验收记录见 [LINUX_ACCEPTANCE.md](docs/LINUX_ACCEPTANCE.md)。示例中的数值是未校准的模型内结果。
+三种驱动的手工汇总可保存为 `runs/v070-three-driver-comparison.json`。
 
-## 恢复对照
+## 四个政策条件
 
-源运行需有完整第 15 步。恢复仍使用 1–30 日的原配置、相同种子，并写入全新目录：
+- `baseline`：基线求助门槛和服务规则；
+- `outreach`：第 5 天向全体学生提供支持服务信息；
+- `easier_access`：降低有效求助门槛；
+- `targeted_outreach`：第 5 天向初始低联结组提供支持服务信息。
 
-```bash
-python -m campus_sim.cli run --config configs/baseline.json --seed 11 --output runs/resumed-baseline-11 --source runs/experiment/baseline-seed11 --step 15
-python -m campus_sim.cli verify-resume runs/experiment/baseline-seed11 runs/resumed-baseline-11
-```
+初始低联结分组在模拟开始时固定，用于定义定向干预对象；学生的动态联结值仍会随互动、缺席和时间变化。
 
-验证逐日指标、行动事实和聚合结果相同，忽略运行 ID。失败后只从 Society0 完整步骤恢复；不得把部分阶段结果作为完成。需要人工核对的 Linux 验收项和证据字段见 [LINUX_ACCEPTANCE.md](docs/LINUX_ACCEPTANCE.md)。
+## 行为轨迹与指标
 
-## Windows 检查
+系统记录 `attend`、`rest`、`peer`、`request`、`accept_support`，以及同伴邀请回应、关系形成与衰减、课程/学习小组/宿舍/社团共同出现、长期状态和伙伴记忆。
 
-Windows 上只进行纯 Python 领域测试与语法检查；本仓库开发时实际执行的是 `python -m pytest -q tests/test_domain.py` 和 `python -m compileall -q src tests`。Society0 POSIX 持久化、完整运行和恢复未在 Windows 宣称通过。
+轨迹评估包含持续缺课、重复求助、无社会接触、混合或已连接等类型，以及有机会却无接触、没有观察到机会、观察到接触和观察不足等孤立状态。LLM 驱动的 `peer` 行动会生成四轮对话；规则驱动使用离线对话后端。
 
-## 模型边界
+## 实验结果说明
 
-三个条件只改变声明字段：`outreach` 在第 5 天向所有合成主体显示一般支持信息；`easier_access` 降低请求规则中的预约障碍系数。容量、初始人口、网络、外部学业事件与命名随机流在同 seed 下固定。校园专业人员仍需审查机制含义和参数，不能从三个种子推断统计显著性。详见 [MODEL_CARD.md](docs/MODEL_CARD.md)。
+V070 三驱动矩阵已经在 Linux 上完成。不同驱动的基线行为和干预响应存在明显差异，尤其是 DeepSeek 的基线求助率较低、Qwen 对降低求助门槛较敏感。已完成模型运行通过响应解析和四轮对话有效性检查。
+
+这些结果只支持当前协议下的描述性比较。增加种子、延长模拟时间、行为校准和真实数据接入属于后续工作。
+
+## 项目目录
+
+- `src/campus_sim/`：模拟器源码；
+- `configs/`：场景和评估协议；
+- `tests/`：单元与集成测试；
+- `docs/`：阶段说明和评估协议；
+- `runs/`：本地实验输出，默认不提交到 Git。
