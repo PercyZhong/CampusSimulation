@@ -67,7 +67,7 @@ python -m campus_sim.cli run \
   --provider qwen --model qwen-plus --max-model-calls 900
 ```
 
-每次运行应使用新的输出目录。主要输出包括 `summary.json`、`events.jsonl`、`daily_metrics.csv`、`trajectory_profiles.jsonl` 和 `interactions.jsonl`。
+每次运行应使用新的输出目录。主要输出包括 `summary.json`、`events.jsonl`、`daily_metrics.csv`、`trajectory_profiles.jsonl`、`trajectory-assessment.json` 和 `interactions.jsonl`。运行 `trajectory-report` 还会生成 `trajectory-report.html`。
 
 ## V070 多种子矩阵
 
@@ -80,7 +80,7 @@ python -m campus_sim.cli matrix-report-v070 --root runs --driver rule
 
 模型驱动只需将 `rule` 替换为 `qwen` 或 `deepseek`。报告文件为 `runs/v070-matrix-{driver}-report.json`，包含每个条件的三种子均值、样本标准差，以及相对 `baseline` 的同种子配对差。
 
-三种驱动的手工汇总可保存为 `runs/v070-three-driver-comparison.json`。
+三种驱动的手工汇总可保存为 `runs/v070-three-driver-comparison.json`。对单次运行生成轨迹评估和 HTML 可视化：\n\n```bash\npython -m campus_sim.cli trajectory-report runs/example-rule-10d\n```
 
 ## 四个政策条件
 

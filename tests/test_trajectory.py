@@ -11,6 +11,7 @@ from campus_sim.analysis import (
     support_recovery_metrics,
     support_window_metrics,
     trajectory_metrics,
+    trajectory_assessment,
     trajectory_profiles,
 )
 
@@ -90,6 +91,22 @@ def test_trajectory_profiles_separate_opportunity_contact_and_censoring():
     assert rows["s005"]["isolation_status"] == "no_observed_opportunity"
     assert trajectory_profiles(events, students, complete_step=6)[
         "eligible_students"] == 0
+
+
+def test_trajectory_assessment_adds_daily_paths_and_student_counts():
+    students = [{"id": "s000"}, {"id": "s001"}]
+    events = [event(1, 1, "s000", "student_state"),
+              event(2, 1, "s001", "student_state"),
+              event(3, 1, "s000", "rest"),
+              event(4, 2, "s000", "peer", detail={"partner": "s001"})]
+    result = trajectory_assessment(events, students, complete_step=2, window_days=2)
+    assert result["daily_action_counts"] == [
+        {"day": 1, "attend": 0, "rest": 1, "peer": 0, "request": 0,
+         "accept_support": 0},
+        {"day": 2, "attend": 0, "rest": 0, "peer": 1, "request": 0,
+         "accept_support": 0}]
+    assert result["students"]["s000"]["action_days"] == 2
+    assert result["students"]["s000"]["action_counts"] == {"rest": 1, "peer": 1}
 
 
 def test_interaction_network_tracks_new_edges_and_repeated_contacts():

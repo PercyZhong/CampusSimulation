@@ -126,6 +126,35 @@ def trajectory_metrics(events):
                                          if peer_pairs else None)}
 
 
+def trajectory_assessment(events, students, complete_step, window_days=7):
+    """Build a compact, auditable trajectory assessment for review and plotting."""
+    profiles = trajectory_profiles(events, students, complete_step, window_days)
+    selected = selected_actions(events)
+    by_student = {student["id"]: [] for student in students}
+    daily = defaultdict(Counter)
+    for actor, day, ordinal, action in selected:
+        by_student.setdefault(actor, []).append({"day": day, "ordinal": ordinal,
+                                                  "action": action})
+        daily[day][action] += 1
+    for path in by_student.values():
+        path.sort(key=lambda item: (item["day"], item["ordinal"]))
+    action_names = list(ACTION_NAMES)
+    daily_rows = [{"day": day, **{action: counts.get(action, 0) for action in action_names}}
+                  for day, counts in sorted(daily.items())]
+    profile_rows = profiles["by_student"]
+    for student_id, row in profile_rows.items():
+        row["action_path"] = by_student.get(student_id, [])
+        row["action_days"] = len({item["day"] for item in row["action_path"]})
+        row["action_counts"] = dict(Counter(item["action"] for item in row["action_path"]))
+    return {"window_days": profiles["window_days"], "window_start": profiles["window_start"],
+            "window_end": profiles["window_end"], "complete_step": complete_step,
+            "action_names": action_names, "daily_action_counts": daily_rows,
+            "trajectory_metrics": trajectory_metrics(events),
+            "trajectory_type_counts": profiles["trajectory_type_counts"],
+            "isolation_status_counts": profiles["isolation_status_counts"],
+            "eligible_students": profiles["eligible_students"], "students": profile_rows}
+
+
 def trajectory_profiles(events, students, complete_step, window_days=7):
     """Classify observed recent paths without inventing unrecorded contact."""
     start = max(1, complete_step - window_days + 1)
@@ -694,7 +723,36 @@ def export(run_dir):
     with (output / "trajectory_profiles.jsonl").open("w", encoding="utf-8") as stream:
         for row in profiles["by_student"].values():
             stream.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+    assessment = trajectory_assessment(events, students, summary["complete_steps"])
+    (output / "trajectory-assessment.json").write_text(
+        json.dumps(assessment, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return summary
+
+
+def trajectory_report(run_dir):
+    """Write JSON and a dependency-free HTML trajectory review artifact."""
+    output = Path(run_dir)
+    summary, _, events, students, _ = _read(output)
+    assessment = trajectory_assessment(events, students, summary["complete_steps"])
+    (output / "trajectory-assessment.json").write_text(
+        json.dumps(assessment, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    payload = json.dumps(assessment, ensure_ascii=False).replace("</", "<\\/")
+    html = """<!doctype html><meta charset="utf-8"><title>CampusSimulation trajectory report</title>
+<style>body{font:15px system-ui;max-width:1100px;margin:2rem auto;padding:0 1rem;color:#172337}section{background:#f6f8fb;border-radius:10px;padding:1rem;margin:1rem 0}table{border-collapse:collapse;width:100%}td,th{padding:.4rem;border-bottom:1px solid #dce2eb;text-align:left}canvas{width:100%;border:1px solid #dce2eb}</style>
+<h1>行为轨迹评估</h1><p>该报告描述模拟行为，不是现实或临床孤立诊断。</p>
+<section><h2>每日行动分布</h2><canvas id="daily" width="1000" height="300"></canvas></section>
+<section><h2>轨迹类型</h2><pre id="types"></pre><h2>孤立状态</h2><pre id="isolation"></pre></section>
+<section><h2>学生轨迹</h2><table><thead><tr><th>学生</th><th>类型</th><th>孤立状态</th><th>行动日</th><th>行动路径</th></tr></thead><tbody id="students"></tbody></table></section>
+<script id="data" type="application/json">""" + payload + """</script>
+<script>const report=JSON.parse(document.getElementById('data').textContent);const esc=s=>String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+types.textContent=JSON.stringify(report.trajectory_type_counts,null,2);isolation.textContent=JSON.stringify(report.isolation_status_counts,null,2);
+for(const [id,row] of Object.entries(report.students)){students.insertAdjacentHTML('beforeend',`<tr><td>${esc(id)}</td><td>${esc(row.trajectory_type)}</td><td>${esc(row.isolation_status)}</td><td>${row.action_days}</td><td>${esc(row.action_path.map(x=>x.day+':'+x.action).join(' → '))}</td></tr>`)}
+const c=document.getElementById('daily').getContext('2d'), rows=report.daily_action_counts, names=report.action_names, max=Math.max(1,...rows.map(r=>names.reduce((n,a)=>n+r[a],0))); c.font='12px system-ui'; rows.forEach((r,i)=>{let x=35+i*(930/Math.max(1,rows.length)), y=270; for(const a of names){let h=r[a]/max*220;c.fillStyle={attend:'#4c78a8',rest:'#f2a541',peer:'#59a14f',request:'#e15759',accept_support:'#b279a2'}[a]||'#999';c.fillRect(x,y-h,18,h);y-=h} c.fillStyle='#172337';c.fillText(r.day,x,290)});</script>
+"""
+    (output / "trajectory-report.html").write_text(html, encoding="utf-8")
+    return {"assessment": str(output / "trajectory-assessment.json"),
+            "html": str(output / "trajectory-report.html"),
+            "students": len(assessment["students"])}
 
 
 def verify_resume(original, resumed):

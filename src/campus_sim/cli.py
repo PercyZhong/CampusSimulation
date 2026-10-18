@@ -47,6 +47,8 @@ def main(argv=None):
     _model_options(batch)
     analyzed = sub.add_parser("export")
     analyzed.add_argument("run_dir")
+    trajectory = sub.add_parser("trajectory-report")
+    trajectory.add_argument("run_dir")
     check = sub.add_parser("verify-resume")
     check.add_argument("original")
     check.add_argument("resumed")
@@ -83,6 +85,10 @@ def main(argv=None):
         return 0
     if args.command == "export":
         print(json.dumps(export(args.run_dir), ensure_ascii=False))
+        return 0
+    if args.command == "trajectory-report":
+        from .analysis import trajectory_report
+        print(json.dumps(trajectory_report(args.run_dir), ensure_ascii=False))
         return 0
     if args.command == "verify-resume":
         print(json.dumps(verify_resume(args.original, args.resumed)))
