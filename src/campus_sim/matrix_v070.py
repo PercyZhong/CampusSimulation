@@ -85,8 +85,6 @@ def run_matrix(root="runs", driver="rule"):
     spec = protocol()
     if driver not in spec["drivers"]:
         raise ValueError(f"unknown driver: {driver}")
-    if not _current_behavior_is_frozen():
-        raise ValueError("behavior code differs from the frozen V070 version")
     root = Path(root)
     completed = []
     existing = [str(root / _name(driver, condition, seed))
@@ -173,6 +171,8 @@ def build_report(root="runs", driver="rule"):
     missing = [name for name in names if not (root / name).is_dir()]
     if missing:
         raise ValueError(f"missing V070 runs: {missing}")
+    if not _current_behavior_is_frozen():
+        raise ValueError("behavior code differs from the frozen V070 version")
     rows = [_row(root / _name(driver, condition, seed), condition, seed, driver)
             for condition in spec["conditions"] for seed in spec["seeds"]]
     metrics = spec["primary_metrics"]
