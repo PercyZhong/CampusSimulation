@@ -98,6 +98,34 @@ def _action(text, allowed=None):
     return action
 
 
+def _json_object_prefix(text):
+    """Decode the first JSON object when a provider appends extra text."""
+    value = text.strip()
+    if value.startswith("```"):
+        value = value.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(value):
+        if char != "{":
+            continue
+        try:
+            data, _ = decoder.raw_decode(value[index:])
+        except json.JSONDecodeError:
+            continue
+        return data
+    raise ValueError("model response contains no JSON object")
+
+
+def _action_from_provider(text, allowed):
+    try:
+        return _action(text, allowed)
+    except ValueError:
+        data = _json_object_prefix(text)
+        action = data.get("action") if isinstance(data, dict) else None
+        if action not in allowed:
+            action = next(iter(allowed), "rest")
+        return action
+
+
 def _dialogue(text, actor, partner):
     if not isinstance(text, str):
         raise TypeError("model returned no dialogue text")
@@ -117,6 +145,13 @@ def _dialogue(text, actor, partner):
                 or not 1 <= len(turn["text"].strip()) <= 300):
             raise ValueError("model dialogue has invalid speaker or text")
     return [{"speaker": turn["speaker"], "text": turn["text"].strip()} for turn in turns]
+
+
+def _dialogue_from_provider(text, actor, partner):
+    try:
+        return _dialogue(text, actor, partner)
+    except ValueError:
+        return _dialogue(json.dumps(_json_object_prefix(text), ensure_ascii=False), actor, partner)
 
 
 class ModelClient:
@@ -191,7 +226,12 @@ class ModelClient:
         user = json.dumps({"day": day, "student": student, "course": course,
                            "service": service, "peers": peers, "policy": policy}, ensure_ascii=False)
         content, usage = self._request(system, user, 80)
-        return _action(content, policy["available_actions"]), usage
+        try:
+            action = _action_from_provider(content, policy["available_actions"])
+        except ValueError:
+            action = policy["available_actions"][0]
+            usage = {**usage, "parse_fallback": True}
+        return action, usage
 
     def peer_dialogue(self, *, day, actor, partner, actor_state, partner_state,
                       shared_memory):
@@ -207,4 +247,4 @@ class ModelClient:
                            "actor_state": actor_state, "partner_state": partner_state,
                            "shared_memory": shared_memory}, ensure_ascii=False)
         content, usage = self._request(system, user, 500)
-        return _dialogue(content, actor, partner), usage
+        return _dialogue_from_provider(content, actor, partner), usage

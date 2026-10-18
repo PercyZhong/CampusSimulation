@@ -10,7 +10,9 @@ from campus_sim.models import (
     HandshakeTimeout,
     ModelClient,
     _action,
+    _action_from_provider,
     _dialogue,
+    _dialogue_from_provider,
     choices,
 )
 
@@ -86,6 +88,14 @@ def test_model_configuration_and_response(monkeypatch):
     assert policy_context(Config(condition="baseline"), student, 1)["effective_access_barrier"] == 0.22
     with pytest.raises(ValueError, match="unavailable action"):
         _action('{"action":"request"}', ["attend", "rest"])
+    assert _action_from_provider('{"action":"request"}\nextra', ["rest"]) == "rest"
+
+
+def test_provider_response_normalization_handles_extra_json_text():
+    turns = [{"speaker": speaker, "text": f"turn {index}"}
+             for index, speaker in enumerate(("s000", "s001", "s000", "s001"))]
+    text = json.dumps({"turns": turns}) + "\n" + json.dumps({"extra": True})
+    assert _dialogue_from_provider(text, "s000", "s001") == turns
 
 
 def test_handshake_timeout_retries_once_within_call_limit(monkeypatch):
