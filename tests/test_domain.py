@@ -216,6 +216,13 @@ def test_mood_has_interior_balance_under_repeated_positive_days():
     assert 0.5 < mood < 0.95
 
 
+def test_stress_recovery_does_not_collapse_to_zero():
+    stress = 0.4
+    for _ in range(30):
+        stress = next_stress(stress, recovery=0.6, load=0.03, supported=False)
+    assert 0.1 < stress < 0.6
+
+
 def test_partner_memory_changes_rule_peer_choice(monkeypatch):
     base = Config()
     student = make_population(base)[0][0]
