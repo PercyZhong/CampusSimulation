@@ -7,6 +7,7 @@ from society0.kernel.results import StepResult
 from society0.kernel.runtime import Phase
 from society0.kernel.schedule import SequenceSchedule, activate
 
+
 def campus_schedule_plugin(config, actor_ids, staff_ids):
     def install(context):
         campus = context.require("campus", "campus")

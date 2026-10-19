@@ -471,6 +471,8 @@ def period_available_actions(student, day, period, config, service, course_slots
                 actions.append("request")
     elif period != "evening":
         raise ValueError(f"unknown period: {period}")
+    if student.get("peer_attempt_day") == day:
+        actions.remove("peer")
     if student.get("service_attempt_day") == day:
         actions = [item for item in actions if item not in {"request", "accept_support"}]
     return actions

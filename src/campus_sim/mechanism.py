@@ -224,14 +224,24 @@ class Campus:
 
         def write(writer):
             period = self.current_period if self.config.periods_per_day == 3 else None
+            def rejected(reason, **extra):
+                if period:
+                    self.event(writer, day, actor, "peer", "rejected", reason,
+                               {"period": period, **extra})
+                return {"status": "rejected", "reason": reason, **extra}
             if period:
                 state_row = writer.query("SELECT body FROM campus_students WHERE id=?",
                                          (actor,), max_rows=1)
                 state = json.loads(state_row[0][0])
+                if state.get("peer_attempt_day") == day:
+                    return rejected("already_contacted_today")
                 if "peer" not in period_available_actions(
                         state, day, period, self.config,
                         {"open": False, "queue_turn": False, "slots_remaining": 0}):
-                    return {"status": "rejected", "reason": "period_unavailable"}
+                    return rejected("period_unavailable")
+                state["peer_attempt_day"] = day
+                writer.execute("UPDATE campus_students SET body=? WHERE id=?",
+                               (dumps(state), actor))
             existing = writer.query(
                 "SELECT partner,response FROM campus_peer_invitations WHERE day=? AND actor=?",
                 (day, actor), max_rows=1)
@@ -240,8 +250,13 @@ class Campus:
                 if response == "accepted" and writer.query(
                         "SELECT 1 FROM campus_events WHERE day=? AND actor=? "
                         "AND action='peer' AND status='completed'", (day, actor), max_rows=1):
+                    if period:
+                        return rejected("already_contacted_today", partner=partner,
+                                        response=response)
                     return {"status": "rejected", "partner": partner,
                             "response": response, "reason": "already_contacted_today"}
+                if response != "accepted" and period:
+                    return rejected(response, partner=partner, response=response)
                 return {"status": "completed" if response == "accepted" else "rejected",
                         "partner": partner, "response": response}
             delayed = writer.query(
@@ -262,8 +277,9 @@ class Campus:
                 "SELECT CASE WHEN a=? THEN b ELSE a END FROM campus_edges "
                 "WHERE a=? OR b=? ORDER BY 1", (actor, actor, actor))
             if not peers:
-                self.event(writer, day, actor, "peer", "rejected", "no_peer_edge",
-                           {"period": self.current_period} if self.current_period else None)
+                if period:
+                    return rejected("no_peer_edge")
+                self.event(writer, day, actor, "peer", "rejected", "no_peer_edge")
                 return {"status": "rejected", "reason": "no_peer_edge"}
             recent = writer.query(
                 "SELECT partner,response FROM campus_peer_invitations "
@@ -272,8 +288,9 @@ class Campus:
             excluded = {partner for partner, _ in recent}
             peers = [row for row in peers if row[0] not in excluded]
             if not peers:
-                self.event(writer, day, actor, "peer", "rejected", "invitation_cooldown",
-                           {"period": self.current_period} if self.current_period else None)
+                if period:
+                    return rejected("invitation_cooldown")
+                self.event(writer, day, actor, "peer", "rejected", "invitation_cooldown")
                 return {"status": "rejected", "reason": "invitation_cooldown"}
             partner = peers[int(unit(self.config.seed, "peer_partner", day, actor)
                                 * len(peers))][0]
@@ -284,7 +301,8 @@ class Campus:
             response = peer_response(self.config.seed, day, actor, partner, partner_state, relation)
             actor_state = json.loads(writer.query(
                 "SELECT body FROM campus_students WHERE id=?", (actor,), max_rows=1)[0][0])
-            actor_state["peer_attempt_day"] = day
+            if period:
+                actor_state["peer_attempt_day"] = day
             update_long_term_memory(actor_state,
                 {"day": day, "action": "peer_invitation", "partner": partner,
                  "response": response})
