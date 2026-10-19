@@ -605,7 +605,7 @@ def summarize(run_dir):
         detail = event["detail"]
         venue = detail["context"]["venue"]
         earlier = residence[event["day"], venue]
-        if (event["actor"] in earlier or detail["roommates"] != earlier):
+        if event["actor"] in earlier or detail["roommates"] != earlier:
             raise ValueError("residence copresence lacks prior same-venue arrival")
         earlier.append(event["actor"])
     club_events = [e for e in events if e["action"] == "club_copresence"

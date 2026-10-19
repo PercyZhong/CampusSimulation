@@ -24,7 +24,7 @@ from .domain import (
 )
 from .mechanism import campus_plugin
 from .models import DECISION_PROMPT_VERSION, DIALOGUE_PROMPT_VERSION, ModelClient
-from .schedule import CURRENT_PERIOD, campus_schedule_plugin
+from .schedule import campus_schedule_plugin
 
 
 def _git_sha():
@@ -55,8 +55,8 @@ def build(raw):
         service = await session.information.read("/service")
         peers = await session.information.read("/peers/" + actor)
         state = json.loads(chunk.data)
-        period = CURRENT_PERIOD.get() if config.periods_per_day == 3 else None
         service_data = json.loads(service.data)
+        period = service_data["period"] if config.periods_per_day == 3 else None
         calendar = json.loads(course.data)
         if model_client is None:
             action = (period_action_choice(state, session.moment.time, period, config,
@@ -98,31 +98,30 @@ def build(raw):
                  "policy": policy, "usage": usage,
                  **({"period": period} if period else {})})
         args = {}
-        if action == "peer":
-            if model_client is not None:
-                invitation = await session.actions.invoke(
-                    "campus.peer_invite", Ref("campus", "student", actor), {})
-                if invitation.status != "completed":
-                    return DriverResult("completed", {"action": action,
-                        "status": invitation.status,
-                        "reason": (invitation.value or {}).get("reason"),
-                        **({"period": period} if period else {})}, "rule")
-                peer_details = await session.information.read("/peer_dialogue/" + actor)
-                peer_context = json.loads(peer_details.data)
-                partner = invitation.value["partner"]
-                if peer_context["partner"] != partner:
-                    raise ValueError("peer invitation partner does not match dialogue context")
-                shared_memory = state["memory_context"]["social_memory"]
-                partner_trace = state["long_term_memory"]["partners"].get(partner)
-                if partner_trace:
-                    shared_memory = [*shared_memory,
-                                     {"partner": partner, "long_term_trace": partner_trace}]
-                turns, dialogue_usage = model_client.peer_dialogue(
-                    day=session.moment.time, actor=actor, partner=partner,
-                    actor_state=state, partner_state=peer_context["partner_state"],
-                    shared_memory=shared_memory)
-                args = {"partner": partner, "turns": turns, "usage": dialogue_usage,
-                        "prompt_version": DIALOGUE_PROMPT_VERSION}
+        if action == "peer" and model_client is not None:
+            invitation = await session.actions.invoke(
+                "campus.peer_invite", Ref("campus", "student", actor), {})
+            if invitation.status != "completed":
+                return DriverResult("completed", {"action": action,
+                    "status": invitation.status,
+                    "reason": (invitation.value or {}).get("reason"),
+                    **({"period": period} if period else {})}, "rule")
+            peer_details = await session.information.read("/peer_dialogue/" + actor)
+            peer_context = json.loads(peer_details.data)
+            partner = invitation.value["partner"]
+            if peer_context["partner"] != partner:
+                raise ValueError("peer invitation partner does not match dialogue context")
+            shared_memory = state["memory_context"]["social_memory"]
+            partner_trace = state["long_term_memory"]["partners"].get(partner)
+            if partner_trace:
+                shared_memory = [*shared_memory,
+                                 {"partner": partner, "long_term_trace": partner_trace}]
+            turns, dialogue_usage = model_client.peer_dialogue(
+                day=session.moment.time, actor=actor, partner=partner,
+                actor_state=state, partner_state=peer_context["partner_state"],
+                shared_memory=shared_memory)
+            args = {"partner": partner, "turns": turns, "usage": dialogue_usage,
+                    "prompt_version": DIALOGUE_PROMPT_VERSION}
         result = await session.actions.invoke("campus." + action,
                                                Ref("campus", "student", actor), args)
         return DriverResult("completed", {"action": action, "status": result.status,

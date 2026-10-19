@@ -29,7 +29,6 @@ from .domain import (
 from .language import language_backend
 from .models import _dialogue
 from .population import make_population, make_staff
-from .schedule import CURRENT_PERIOD
 
 SCHEMA = (
     "CREATE TABLE campus_students(id TEXT NOT NULL PRIMARY KEY, body TEXT NOT NULL)",
@@ -63,6 +62,7 @@ def dumps(value):
 class Campus:
     def __init__(self, store, config):
         self.store, self.config = store, config
+        self.current_period = None
         self.language = language_backend(config.language_backend)
 
     def student(self, actor):
@@ -214,7 +214,7 @@ class Campus:
             return ActionResult("rejected", {"reason": "wrong_actor"})
         self.store.transaction(lambda writer: self.event(
             writer, scope.moment.time, scope.actor, "model_decision", "completed",
-            detail={**detail, "period": CURRENT_PERIOD.get()} if CURRENT_PERIOD.get() else detail))
+            detail={**detail, "period": self.current_period} if self.current_period else detail))
         return ActionResult("completed", {"action": detail["action"]})
 
     def peer_invite(self, scope, target):
@@ -223,7 +223,7 @@ class Campus:
             return ActionResult("rejected", {"reason": "wrong_actor"})
 
         def write(writer):
-            period = CURRENT_PERIOD.get() if self.config.periods_per_day == 3 else None
+            period = self.current_period if self.config.periods_per_day == 3 else None
             if period:
                 state_row = writer.query("SELECT body FROM campus_students WHERE id=?",
                                          (actor,), max_rows=1)
@@ -263,7 +263,7 @@ class Campus:
                 "WHERE a=? OR b=? ORDER BY 1", (actor, actor, actor))
             if not peers:
                 self.event(writer, day, actor, "peer", "rejected", "no_peer_edge",
-                           {"period": CURRENT_PERIOD.get()} if CURRENT_PERIOD.get() else None)
+                           {"period": self.current_period} if self.current_period else None)
                 return {"status": "rejected", "reason": "no_peer_edge"}
             recent = writer.query(
                 "SELECT partner,response FROM campus_peer_invitations "
@@ -273,7 +273,7 @@ class Campus:
             peers = [row for row in peers if row[0] not in excluded]
             if not peers:
                 self.event(writer, day, actor, "peer", "rejected", "invitation_cooldown",
-                           {"period": CURRENT_PERIOD.get()} if CURRENT_PERIOD.get() else None)
+                           {"period": self.current_period} if self.current_period else None)
                 return {"status": "rejected", "reason": "invitation_cooldown"}
             partner = peers[int(unit(self.config.seed, "peer_partner", day, actor)
                                 * len(peers))][0]
@@ -308,8 +308,8 @@ class Campus:
                            detail={"partner": partner, "partner_response": response,
                                    "response_reason": ("partner_unavailable" if response == "rejected"
                                                        else "no_reply_before_deadline"),
-                                   **({"period": CURRENT_PERIOD.get()}
-                                      if CURRENT_PERIOD.get() else {})})
+                                   **({"period": self.current_period}
+                                      if self.current_period else {})})
             return {"status": "completed" if response == "accepted" else "rejected",
                     "partner": partner, "response": response,
                     "reason": response if response != "accepted" else None}
@@ -337,7 +337,7 @@ class Campus:
             if not rows:
                 return {"status": "rejected", "reason": "unknown_actor"}
             state = json.loads(rows[0][0])
-            period = CURRENT_PERIOD.get() if self.config.periods_per_day == 3 else None
+            period = self.current_period if self.config.periods_per_day == 3 else None
             if period:
                 already = any(json.loads(detail).get("period") == period
                               for (detail,) in writer.iter_query(
@@ -361,7 +361,8 @@ class Campus:
                     invitation = writer.query(
                         "SELECT response FROM campus_peer_invitations WHERE day=? AND actor=?",
                         (day, actor), max_rows=1)
-                    if invitation and invitation[0][0] == "accepted":
+                    if (invitation and invitation[0][0] == "accepted"
+                            and "peer" not in available_actions):
                         available_actions.append("peer")
                 if action not in available_actions:
                     self.event(writer, day, actor, action, "rejected", "period_unavailable",
@@ -837,6 +838,7 @@ class CampusInformation:
                 return {"queue_turn": bool(first and first[0][0] == scope.actor),
                         "slots_remaining": max(0, remaining)}
             data = {"open": scope.moment.time % components["service"]["open_every"] == 0,
+                    "period": self.campus.current_period,
                     "capacity": components["service"]["capacity"],
                     "access_barrier": barrier,
                     "available_slots": self.campus.store.read(lambda view:

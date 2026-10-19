@@ -1,15 +1,11 @@
 """Daily Society0 phases; service settlement follows all actor actions."""
 
 import json
-from contextvars import ContextVar
 
 from society0.kernel.plugins import Plugin
 from society0.kernel.results import StepResult
 from society0.kernel.runtime import Phase
 from society0.kernel.schedule import SequenceSchedule, activate
-
-CURRENT_PERIOD = ContextVar("campus_period", default=None)
-
 
 def campus_schedule_plugin(config, actor_ids, staff_ids):
     def install(context):
@@ -33,13 +29,13 @@ def campus_schedule_plugin(config, actor_ids, staff_ids):
 
         def period_decide(period):
             async def run(phase):
-                token = CURRENT_PERIOD.set(period)
+                campus.current_period = period
                 try:
                     actors = (campus.afternoon_order(actor_ids) if period == "afternoon"
                               else actor_ids)
                     results = await activate(phase, actors)
                 finally:
-                    CURRENT_PERIOD.reset(token)
+                    campus.current_period = None
                 return StepResult(metrics={f"{period}_decisions": len(results)},
                                   tables={f"{period}_actions": (
                     {"actor": item.actor_id, "period": period, **item.result.value}
