@@ -197,6 +197,11 @@ def clamp(value):
     return round(min(1.0, max(0.0, value)), 6)
 
 
+def signed_clamp(value):
+    """Bound a confidence balance while preserving positive/negative evidence."""
+    return round(min(1.0, max(-1.0, value)), 6)
+
+
 def memory_context(events, day, limit=5):
     """Return auditable recency-weighted memory without deleting raw events."""
     weighted = []
@@ -236,8 +241,8 @@ def update_long_term_memory(state, event):
             trace["last_response"] = response
             trace["response_history"] = (trace["response_history"] +
                                            [{"day": event["day"], "response": response}])[-5:]
-            trace["confidence"] = clamp(trace.get("confidence", 0.0) * 0.75 +
-                                         (0.25 if response == "accepted" else -0.25))
+            trace["confidence"] = signed_clamp(trace.get("confidence", 0.0) * 0.75 +
+                                                (0.25 if response == "accepted" else -0.25))
         trace["last_day"] = event["day"]
         trace["salience_day"] = event["day"]
     event_type = event.get("event_type")
