@@ -19,6 +19,7 @@ from campus_sim.domain import (
     residence_context,
     unit,
     update_long_term_memory,
+    update_long_term_state,
 )
 
 
@@ -160,6 +161,35 @@ def test_long_term_partner_memory_decays_and_keeps_factual_counts():
     decay_long_term_memory(state, 50)
     assert state["long_term_memory"]["partners"] == {}
     assert state["long_term_memory"]["action_counts"]["peer"] == 1
+
+
+def test_long_term_memory_retains_conflicting_responses_and_event_strength():
+    state = {"long_term_memory": {"action_counts": {}, "partners": {}, "events": {}}}
+    update_long_term_memory(state, {"day": 1, "action": "peer_response",
+                                    "partner": "s001", "response": "accepted"})
+    update_long_term_memory(state, {"day": 2, "action": "peer_response",
+                                    "partner": "s001", "response": "rejected"})
+    trace = state["long_term_memory"]["partners"]["s001"]
+    assert [item["response"] for item in trace["response_history"]] == ["accepted", "rejected"]
+    assert trace["confidence"] < 0
+    update_long_term_memory(state, {"day": 2, "action": "course_absence",
+                                    "event_type": "academic_setback", "impact": 0.3})
+    assert state["long_term_memory"]["events"]["academic_setback"]["strength"] == 0.3
+
+
+def test_long_term_state_recovery_and_setback_are_bounded_and_coupled():
+    state = {"academic_engagement": 0.5, "self_efficacy": 0.5,
+             "belonging": 0.5, "help_seeking_belief": 0.5,
+             "social_avoidance": 0.5, "low_streak": 0}
+    update_long_term_state(state, action="attend", outcome="completed", day=1)
+    update_long_term_state(state, action="attend", outcome="completed", day=2)
+    assert state["academic_success_streak"] == 2
+    assert state["self_efficacy"] > 0.5
+    update_long_term_state(state, action="course_absence", outcome="completed", day=3)
+    assert state["setback_streak"] == 1
+    assert all(0 <= state[key] <= 1 for key in ("academic_engagement", "self_efficacy",
+                                                 "belonging", "help_seeking_belief",
+                                                 "social_avoidance"))
 
 
 def test_partner_memory_changes_rule_peer_choice(monkeypatch):

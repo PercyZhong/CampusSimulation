@@ -23,6 +23,7 @@ from .domain import (
     scenario_context,
     unit,
     update_long_term_memory,
+    update_long_term_state,
 )
 from .language import language_backend
 from .models import _dialogue
@@ -76,7 +77,14 @@ class Campus:
     def remember(state, event):
         state.setdefault("recent_events", []).append(event)
         state["recent_events"] = state["recent_events"][-5:]
-        update_long_term_memory(state, event)
+        enriched = dict(event)
+        if enriched.get("action") == "course_absence":
+            enriched["event_type"] = "academic_setback"
+            enriched["impact"] = 0.22
+        elif enriched.get("action") == "accept_support":
+            enriched["event_type"] = "support_success"
+            enriched["impact"] = 0.28
+        update_long_term_memory(state, enriched)
 
     @staticmethod
     def remember_social(state, event):
@@ -426,6 +434,7 @@ class Campus:
                 reason = "unknown_action"
                 self.event(writer, day, actor, action, "rejected", reason)
                 return {"status": "rejected", "reason": reason}
+            update_long_term_state(state, action=action, outcome="completed", day=day)
             writer.execute("UPDATE campus_students SET body=? WHERE id=?", (dumps(state), actor))
             if action == "peer":
                 partner_state["connection"] = clamp(partner_state["connection"] + 0.02)
@@ -607,6 +616,9 @@ class Campus:
                                    detail={"course_id": course["course_id"],
                                            "missed_course_streak": absence_streak,
                                            "venue": course["venue"]})
+                        update_long_term_memory(state, {"day": day, "action": "course_absence",
+                                                        "event_type": "academic_setback",
+                                                        "impact": 0.22})
                 state["missed_course_streak"] = absence_streak
                 if state["pending_day"] is not None and day > state["pending_day"]:
                     state["wait_days"] += 1
@@ -627,6 +639,9 @@ class Campus:
                                                       (0.004 if state["supported"] else -0.001))
                 state["social_avoidance"] = clamp(state["social_avoidance"] +
                                                    (0.004 if state["connection"] < 0.3 else -0.002))
+                update_long_term_state(state, action=("course_absence" if absence_streak else
+                                                      state.get("recent_events", [{}])[-1].get("action")),
+                                       outcome="completed", day=day)
                 state["low_streak"] = state["low_streak"] + 1 if state["connection"] < 0.3 else 0
                 decay_long_term_memory(state, day)
                 writer.execute("UPDATE campus_students SET body=? WHERE id=?", (dumps(state), actor))

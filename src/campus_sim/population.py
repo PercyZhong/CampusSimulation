@@ -24,8 +24,12 @@ def make_population(config):
                      "supported_day": None, "follow_up_sent": False,
                      "low_streak": 0, "ever_requested": False, "ever_supported": False,
                      "missed_course_streak": 0,
+                     "recovery_streak": 0, "setback_streak": 0,
+                     "support_failure_streak": 0, "social_contact_streak": 0,
+                     "academic_success_streak": 0,
                      "outreach_seen": False, "recent_events": [], "social_memory": [],
-                     "long_term_memory": {"action_counts": {}, "partners": {}},
+                     "long_term_memory": {"action_counts": {}, "partners": {},
+                                          "events": {}},
                      "initial_group": "lower" if connection < 0.475 else "higher"})
     edges = [(rows[i]["id"], rows[(i + 1) % len(rows)]["id"]) for i in range(len(rows))]
     return rows, edges

@@ -129,6 +129,7 @@ def trajectory_metrics(events):
 def trajectory_assessment(events, students, complete_step, window_days=7):
     """Build a compact, auditable trajectory assessment for review and plotting."""
     profiles = trajectory_profiles(events, students, complete_step, window_days)
+    history = trajectory_profile_history(events, students, complete_step, window_days)
     selected = selected_actions(events)
     by_student = {student["id"]: [] for student in students}
     daily = defaultdict(Counter)
@@ -152,6 +153,7 @@ def trajectory_assessment(events, students, complete_step, window_days=7):
             "trajectory_metrics": trajectory_metrics(events),
             "trajectory_type_counts": profiles["trajectory_type_counts"],
             "isolation_status_counts": profiles["isolation_status_counts"],
+            "trajectory_history": history,
             "eligible_students": profiles["eligible_students"], "students": profile_rows}
 
 
@@ -238,6 +240,35 @@ def trajectory_profiles(events, students, complete_step, window_days=7):
             "trajectory_type_counts": dict(types),
             "isolation_status_counts": dict(isolation),
             "by_student": by_student}
+
+
+def trajectory_profile_history(events, students, complete_step, window_days=7):
+    """Classify each complete rolling window and expose type transitions."""
+    if window_days < 1:
+        raise ValueError("window_days must be positive")
+    windows = []
+    first_end = window_days
+    for end in range(first_end, complete_step + 1):
+        profiles = trajectory_profiles(events, students, end, window_days)
+        if profiles["eligible_students"]:
+            windows.append({"window_start": profiles["window_start"],
+                            "window_end": end,
+                            "trajectory_type_counts": profiles["trajectory_type_counts"],
+                            "isolation_status_counts": profiles["isolation_status_counts"],
+                            "by_student": profiles["by_student"]})
+    transitions = []
+    for previous, current in zip(windows, windows[1:]):
+        for student in sorted(current["by_student"]):
+            before = previous["by_student"].get(student, {}).get("trajectory_type")
+            after = current["by_student"][student]["trajectory_type"]
+            if before and after != before:
+                transitions.append({"student_id": student, "from": before, "to": after,
+                                    "window_end": current["window_end"]})
+    matrix = Counter((row["from"], row["to"]) for row in transitions)
+    return {"window_days": window_days, "windows": windows,
+            "transitions": transitions,
+            "transition_counts": {f"{left}->{right}": count
+                                   for (left, right), count in sorted(matrix.items())}}
 
 
 def support_window_metrics(events, complete_step, width=3):
@@ -654,7 +685,11 @@ def summarize(run_dir):
                        "partners")) for s in students),
                    "retained_partner_traces": sum(len(s.get("long_term_memory", {}).get(
                        "partners", {})) for s in students),
-                   "action_counts": dict(memory_actions)},
+                   "action_counts": dict(memory_actions),
+                   "event_types": sorted({event_type for s in students for event_type in
+                                           s.get("long_term_memory", {}).get("events", {})}),
+                   "students_with_event_memory": sum(bool(s.get("long_term_memory", {}).get(
+                       "events")) for s in students)},
                **trajectories,
                "trajectory_profiles": {key: value for key, value in profiles.items()
                                        if key != "by_student"},

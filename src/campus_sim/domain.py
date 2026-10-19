@@ -208,8 +208,13 @@ def memory_context(events, day, limit=5):
 
 
 def update_long_term_memory(state, event):
-    """Keep bounded factual counts and a decaying partner trace."""
-    memory = state.setdefault("long_term_memory", {"action_counts": {}, "partners": {}})
+    """Update factual counts plus bounded, weighted social/event memories.
+
+    Response history is retained in a small bounded list so conflicting
+    responses remain auditable instead of being overwritten by ``last_response``.
+    """
+    memory = state.setdefault("long_term_memory", {"action_counts": {}, "partners": {}, "events": {}})
+    memory.setdefault("events", {})
     action = event.get("action")
     if action:
         counts = memory["action_counts"]
@@ -218,7 +223,9 @@ def update_long_term_memory(state, event):
     if partner:
         partners = memory["partners"]
         trace = partners.setdefault(partner, {"contacts": 0, "last_day": event["day"],
-                                               "salience": 0.0})
+                                               "salience": 0.0, "confidence": 0.0,
+                                               "response_history": []})
+        trace.setdefault("response_history", [])
         elapsed = max(0, event["day"] - trace.get("salience_day", trace["last_day"]))
         response = event.get("response")
         trace["salience"] = clamp(trace["salience"] * 0.9**elapsed
@@ -227,21 +234,84 @@ def update_long_term_memory(state, event):
             trace["contacts"] += 1
         if response:
             trace["last_response"] = response
+            trace["response_history"] = (trace["response_history"] +
+                                           [{"day": event["day"], "response": response}])[-5:]
+            trace["confidence"] = clamp(trace.get("confidence", 0.0) * 0.8 +
+                                         (0.2 if response == "accepted" else -0.2))
         trace["last_day"] = event["day"]
         trace["salience_day"] = event["day"]
+    event_type = event.get("event_type")
+    if event_type:
+        item = memory["events"].setdefault(event_type, {"strength": 0.0,
+                                                         "last_day": event["day"],
+                                                         "count": 0})
+        elapsed = max(0, event["day"] - item.get("last_day", event["day"]))
+        item["strength"] = clamp(item["strength"] * 0.92**elapsed +
+                                  float(event.get("impact", 0.2)))
+        item["last_day"] = event["day"]
+        item["count"] += 1
     return memory
 
 
 def decay_long_term_memory(state, day):
     """Decay recall strength once per day while retaining auditable counts."""
-    memory = state.setdefault("long_term_memory", {"action_counts": {}, "partners": {}})
+    memory = state.setdefault("long_term_memory", {"action_counts": {}, "partners": {}, "events": {}})
+    memory.setdefault("events", {})
     for trace in memory["partners"].values():
         elapsed = max(0, day - trace.get("salience_day", trace["last_day"]))
         trace["salience"] = clamp(trace["salience"] * 0.9**elapsed)
         trace["salience_day"] = day
     memory["partners"] = {partner: trace for partner, trace in memory["partners"].items()
                           if trace["salience"] >= 0.05}
+    for item in memory["events"].values():
+        elapsed = max(0, day - item.get("last_day", day))
+        item["strength"] = clamp(item.get("strength", 0.0) * 0.92**elapsed)
+        item["last_day"] = day
+    memory["events"] = {key: item for key, item in memory["events"].items()
+                        if item.get("strength", 0.0) >= 0.03}
     return memory
+
+
+def update_long_term_state(state, *, action=None, outcome=None, day=None):
+    """Apply coupled recovery/setback dynamics with bounded increments."""
+    success = (outcome in {"accepted", "supported"} or
+               (outcome == "completed" and action in {"attend", "peer", "accept_support"}))
+    setback = outcome in {"rejected", "timeout", "failed"} or action in {"course_absence", "miss"}
+    if success:
+        state["recovery_streak"] = state.get("recovery_streak", 0) + 1
+        state["setback_streak"] = 0
+        state["support_failure_streak"] = 0 if action in {"accept_support", "peer"} else state.get("support_failure_streak", 0)
+    elif setback:
+        state["setback_streak"] = state.get("setback_streak", 0) + 1
+        state["recovery_streak"] = 0
+        if action in {"peer", "request"}:
+            state["support_failure_streak"] = state.get("support_failure_streak", 0) + 1
+    if action == "attend" and success:
+        state["academic_success_streak"] = state.get("academic_success_streak", 0) + 1
+    elif action == "course_absence":
+        state["academic_success_streak"] = 0
+    if action == "peer" and success:
+        state["social_contact_streak"] = state.get("social_contact_streak", 0) + 1
+    elif action in {"rest", "course_absence"}:
+        state["social_contact_streak"] = 0
+    recovery = min(0.006, 0.0015 * state.get("recovery_streak", 0))
+    setback_amount = min(0.008, 0.0015 * state.get("setback_streak", 0))
+    state["academic_engagement"] = clamp(state["academic_engagement"] +
+        (recovery if action == "attend" else -setback_amount if action == "course_absence" else 0))
+    state["self_efficacy"] = clamp(state["self_efficacy"] +
+        (0.004 if state.get("academic_success_streak", 0) >= 2 else -0.003 if action == "course_absence" else 0))
+    state["belonging"] = clamp(state["belonging"] +
+        (0.003 if state.get("social_contact_streak", 0) >= 2 else -0.003 if state.get("low_streak", 0) >= 2 else 0))
+    state["help_seeking_belief"] = clamp(state["help_seeking_belief"] +
+        (0.008 if action == "accept_support" and success else
+         -0.006 if action in {"request", "peer"} and outcome in {"rejected", "timeout"} else 0))
+    state["social_avoidance"] = clamp(state["social_avoidance"] +
+        (-0.006 if action == "peer" and success else 0.004 if setback else 0))
+    if day is not None:
+        state.setdefault("long_term_memory", {}).setdefault("state_updates", []).append(
+            {"day": day, "action": action, "outcome": outcome})
+        state["long_term_memory"]["state_updates"] = state["long_term_memory"]["state_updates"][-10:]
+    return state
 
 
 def academic_event(seed, day):
@@ -348,6 +418,10 @@ def action_choice(student, day, config):
     scenario = scenario_context(config.seed, day, student)
     propensity = 0.14 + 0.48 * student["willingness"] + 0.14 * (1 - student["connection"])
     propensity += 0.08 * (student.get("help_seeking_belief", 0.5) - 0.5)
+    event_memory = student.get("long_term_memory", {}).get("events", {})
+    setback_memory = event_memory.get("academic_setback", {}).get("strength", 0.0)
+    support_memory = event_memory.get("support_success", {}).get("strength", 0.0)
+    propensity += 0.04 * support_memory - 0.03 * setback_memory
     if scenario["exam_period"]:
         propensity += 0.025
     effects = intervention_effects(config, student, day)
@@ -362,7 +436,7 @@ def action_choice(student, day, config):
                        + (0.03 if scenario["low_social_signal"] else 0))
     traces = student.get("long_term_memory", {}).get("partners", {}).values()
     memory_signal = sum(
-        trace["salience"] * (1 if trace.get("last_response") == "accepted" else -1)
+        trace["salience"] * trace.get("confidence", (1 if trace.get("last_response") == "accepted" else -1))
         for trace in traces if trace.get("last_response") in {"accepted", "rejected", "timeout"})
     peer_limit = clamp(peer_limit + 0.04 * max(-1.0, min(1.0, memory_signal)))
     rest_limit = clamp(peer_limit + 0.22 + (0.04 if scenario["exam_period"] else 0))
