@@ -236,8 +236,8 @@ def update_long_term_memory(state, event):
             trace["last_response"] = response
             trace["response_history"] = (trace["response_history"] +
                                            [{"day": event["day"], "response": response}])[-5:]
-            trace["confidence"] = clamp(trace.get("confidence", 0.0) * 0.8 +
-                                         (0.2 if response == "accepted" else -0.2))
+            trace["confidence"] = clamp(trace.get("confidence", 0.0) * 0.75 +
+                                         (0.25 if response == "accepted" else -0.25))
         trace["last_day"] = event["day"]
         trace["salience_day"] = event["day"]
     event_type = event.get("event_type")

@@ -257,7 +257,7 @@ def trajectory_profile_history(events, students, complete_step, window_days=7):
                             "isolation_status_counts": profiles["isolation_status_counts"],
                             "by_student": profiles["by_student"]})
     transitions = []
-    for previous, current in zip(windows, windows[1:]):
+    for previous, current in itertools.pairwise(windows):
         for student in sorted(current["by_student"]):
             before = previous["by_student"].get(student, {}).get("trajectory_type")
             after = current["by_student"][student]["trajectory_type"]
