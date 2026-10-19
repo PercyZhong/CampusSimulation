@@ -194,6 +194,26 @@ def test_long_term_state_recovery_and_setback_are_bounded_and_coupled():
                                                  "social_avoidance"))
 
 
+def test_social_state_rewards_diminish_and_do_not_reward_rest():
+    state = {"academic_engagement": 0.5, "self_efficacy": 0.5,
+             "belonging": 0.99, "help_seeking_belief": 0.5,
+             "social_avoidance": 0.01, "low_streak": 0,
+             "social_contact_streak": 2, "academic_success_streak": 2}
+    update_long_term_state(state, action="rest", outcome="completed")
+    assert state["self_efficacy"] == 0.5
+    assert state["belonging"] == 0.99
+    update_long_term_state(state, action="peer", outcome="completed")
+    assert 0.99 < state["belonging"] < 1
+    assert 0 < state["social_avoidance"] < 0.01
+
+
+def test_mood_has_interior_balance_under_repeated_positive_days():
+    mood = 0.5
+    for _ in range(90):
+        mood = next_mood(mood, 0.4, 0.6, True)
+    assert 0.5 < mood < 0.95
+
+
 def test_partner_memory_changes_rule_peer_choice(monkeypatch):
     base = Config()
     student = make_population(base)[0][0]

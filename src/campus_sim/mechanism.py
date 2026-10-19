@@ -464,13 +464,13 @@ class Campus:
                 state["ever_supported"] = True
                 state["supported_day"] = day
                 state["stress"] = clamp(state["stress"] - 0.1)
-                state["mood"] = clamp(state["mood"] + 0.04)
+                state["mood"] = clamp(state["mood"] + 0.04 * (1 - state["mood"]))
                 writer.execute("DELETE FROM campus_queue WHERE actor=?", (actor,))
                 writer.execute("INSERT INTO campus_service_usage VALUES(?,1) ON CONFLICT(day) DO UPDATE SET used=used+1", (day,))
             elif action == "rest":
                 state["recovery"] = clamp(state["recovery"] + 0.09)
                 state["stress"] = clamp(state["stress"] - 0.025)
-                state["mood"] = clamp(state["mood"] + 0.015)
+                state["mood"] = clamp(state["mood"] + 0.015 * (1 - state["mood"]))
             elif action == "peer":
                 invitation = writer.query(
                     "SELECT partner,response FROM campus_peer_invitations WHERE day=? AND actor=?",
@@ -499,10 +499,15 @@ class Campus:
                                "ON CONFLICT(a,b) DO UPDATE SET strength=?,last_day=?,contacts=?,relationship_type=?",
                                (left, right, strength, first_day, day, contacts, relation,
                                 strength, day, contacts, relation))
-                state["connection"] = clamp(state["connection"] + 0.045)
-                state["mood"] = clamp(state["mood"] + 0.02)
-                state["belonging"] = clamp(state["belonging"] + 0.025)
-                state["social_avoidance"] = clamp(state["social_avoidance"] - 0.02)
+                # Familiar contacts retain value, with decreasing marginal benefit.
+                social_gain = 1 / contacts**0.5
+                state["connection"] = clamp(state["connection"] +
+                                             0.045 * social_gain * (1 - state["connection"]))
+                state["mood"] = clamp(state["mood"] +
+                                       0.02 * social_gain * (1 - state["mood"]))
+                state["belonging"] = clamp(state["belonging"] +
+                                            0.025 * social_gain * (1 - state["belonging"]))
+                # Avoidance is updated once, by update_long_term_state below.
             elif action == "attend":
                 writer.execute("INSERT INTO campus_venue_bookings VALUES(?,?,?,?,?)",
                                (day, actor, schedule["venue"], schedule["slot"],
@@ -517,8 +522,11 @@ class Campus:
             update_long_term_state(state, action=action, outcome="completed", day=day)
             writer.execute("UPDATE campus_students SET body=? WHERE id=?", (dumps(state), actor))
             if action == "peer":
-                partner_state["connection"] = clamp(partner_state["connection"] + 0.02)
-                partner_state["mood"] = clamp(partner_state["mood"] + 0.01)
+                partner_before = {key: partner_state[key] for key in ("connection", "mood")}
+                partner_state["connection"] = clamp(partner_state["connection"] +
+                    0.02 * social_gain * (1 - partner_state["connection"]))
+                partner_state["mood"] = clamp(partner_state["mood"] +
+                    0.01 * social_gain * (1 - partner_state["mood"]))
                 writer.execute("UPDATE campus_students SET body=? WHERE id=?",
                                (dumps(partner_state), partner))
             classmate = None
@@ -619,8 +627,8 @@ class Campus:
             if action == "peer":
                 feedback = {key: round(state[key] - before[key], 6)
                             for key in before if state[key] != before[key]}
-                feedback["partner_connection_delta"] = 0.02
-                feedback["partner_mood_delta"] = 0.01
+                for key, value in partner_before.items():
+                    feedback[f"partner_{key}_delta"] = round(partner_state[key] - value, 6)
             else:
                 feedback = {key: round(state[key] - before[key], 6)
                             for key in before if state[key] != before[key]}
@@ -666,7 +674,7 @@ class Campus:
                         break
                     state["follow_up_sent"] = True
                     state["stress"] = clamp(state["stress"] - 0.04)
-                    state["mood"] = clamp(state["mood"] + 0.03)
+                    state["mood"] = clamp(state["mood"] + 0.03 * (1 - state["mood"]))
                     self.remember(state, {"day": day, "action": "staff_follow_up", "status": "completed"})
                     writer.execute("UPDATE campus_students SET body=? WHERE id=?", (dumps(state), sid))
                     follow_used += 1
@@ -716,14 +724,19 @@ class Campus:
                 state["self_efficacy"] = clamp(state["self_efficacy"] +
                                                 (0.002 if state["academic_engagement"] >= 0.5 else -0.002))
                 state["belonging"] = clamp(state["belonging"] +
-                                            (0.003 if state["connection"] >= 0.3 else -0.004))
+                                            (0.003 * (1 - state["belonging"])
+                                             if state["connection"] >= 0.3 else -0.004))
                 state["help_seeking_belief"] = clamp(state["help_seeking_belief"] +
                                                       (0.004 if state["supported"] else -0.001))
                 state["social_avoidance"] = clamp(state["social_avoidance"] +
-                                                   (0.004 if state["connection"] < 0.3 else -0.002))
-                update_long_term_state(state, action=("course_absence" if absence_streak else
-                                                      state.get("recent_events", [{}])[-1].get("action")),
-                                       outcome="completed", day=day)
+                                                   (0.004 * (1 - state["social_avoidance"])
+                                                    if state["connection"] < 0.3
+                                                    else -0.002 * state["social_avoidance"]))
+                # Actions already applied their state effects when executed.
+                # Only a newly observed absence needs an additional update here.
+                if course["open"] and not present:
+                    update_long_term_state(state, action="course_absence",
+                                           outcome="completed", day=day)
                 state["low_streak"] = state["low_streak"] + 1 if state["connection"] < 0.3 else 0
                 decay_long_term_memory(state, day)
                 writer.execute("UPDATE campus_students SET body=? WHERE id=?", (dumps(state), actor))
@@ -837,6 +850,8 @@ class CampusInformation:
                                                   "initial_group", "recent_events",
                                                   "social_memory", "long_term_memory",
                                                   "supported_day", "follow_up_sent")}
+            data["peer_attempt_day"] = state.get("peer_attempt_day")
+            data["service_attempt_day"] = state.get("service_attempt_day")
             data["memory_context"] = {
                 "recent_events": memory_context(state["recent_events"], scope.moment.time),
                 "social_memory": memory_context(state["social_memory"], scope.moment.time),

@@ -89,6 +89,9 @@ def test_three_period_day_has_one_action_per_student_and_period(tmp_path):
     assert all(event["detail"].get("period") == "morning" for event in actions
                if event["action"] == "attend")
     assert summary["complete_steps"] == 2
+    assert not any(event.get("reason") == "already_contacted_today" for event in actions)
+    # A successful peer attempt must remove peer from later periods' choices.
+    assert any(event["action"] == "rest" for event in actions)
 
 
 def test_targeted_outreach_records_actual_reach_and_window(tmp_path):
@@ -225,8 +228,8 @@ def test_peer_action_records_partner_dialogue_and_updates_partner(tmp_path):
             detail = json.loads(event)
             assert detail["partner"] in {"s001", "s002"}
             assert len(detail["turns"]) == 4
-            assert detail["feedback"]["connection"] == 0.045
-            assert detail["feedback"]["partner_connection_delta"] == 0.02
+            assert 0 < detail["feedback"]["connection"] < 0.045
+            assert 0 < detail["feedback"]["partner_connection_delta"] < 0.02
             student = store.read(lambda view: json.loads(view.query(
                 "SELECT body FROM campus_students WHERE id='s000'", max_rows=1)[0][0]))
             partner = store.read(lambda view: json.loads(view.query(

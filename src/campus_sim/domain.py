@@ -307,14 +307,17 @@ def update_long_term_state(state, *, action=None, outcome=None, day=None):
     state["academic_engagement"] = clamp(state["academic_engagement"] +
         (recovery if action == "attend" else -setback_amount if action == "course_absence" else 0))
     state["self_efficacy"] = clamp(state["self_efficacy"] +
-        (0.004 if state.get("academic_success_streak", 0) >= 2 else -0.003 if action == "course_absence" else 0))
+        (0.004 if action == "attend" and state.get("academic_success_streak", 0) >= 2 else -0.003 if action == "course_absence" else 0))
     state["belonging"] = clamp(state["belonging"] +
-        (0.003 if state.get("social_contact_streak", 0) >= 2 else -0.003 if state.get("low_streak", 0) >= 2 else 0))
+        (0.003 * (1 - state["belonging"]) if action == "peer" and success
+         and state.get("social_contact_streak", 0) >= 2
+         else -0.003 if action == "course_absence" and state.get("low_streak", 0) >= 2 else 0))
     state["help_seeking_belief"] = clamp(state["help_seeking_belief"] +
         (0.008 if action == "accept_support" and success else
          -0.006 if action in {"request", "peer"} and outcome in {"rejected", "timeout"} else 0))
     state["social_avoidance"] = clamp(state["social_avoidance"] +
-        (-0.006 if action == "peer" and success else 0.004 if setback else 0))
+        (-0.006 * state["social_avoidance"] if action == "peer" and success
+         else 0.004 * (1 - state["social_avoidance"]) if setback else 0))
     if day is not None:
         state.setdefault("long_term_memory", {}).setdefault("state_updates", []).append(
             {"day": day, "action": action, "outcome": outcome})
@@ -416,7 +419,9 @@ def next_stress(stress, recovery, load, supported):
 
 def next_mood(mood, stress, recovery, connected):
     """Synthetic affect variable; not a clinical score."""
-    return clamp(mood + 0.035 * recovery + (0.025 if connected else 0) - 0.06 * stress)
+    positive = 0.035 * recovery + (0.025 if connected else 0)
+    return clamp(mood + positive * (1 - mood) - 0.06 * stress * mood
+                 + 0.04 * (0.5 - mood))
 
 
 def action_choice(student, day, config):
