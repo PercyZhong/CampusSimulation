@@ -413,11 +413,10 @@ def scenario_context(seed, day, student):
 
 def next_stress(stress, recovery, load, supported):
     """Daily workload and recovery with bounded adaptation to sustained load."""
-    # Use a moderate homeostatic pull toward the synthetic midpoint.  The
-    # previous 0.15 coefficient drove 30-day rule runs close to zero even
-    # when workload and recovery were balanced.
+    # Keep a small floor while damping accumulated stress.  This avoids both
+    # rapid collapse under light workload and saturation under sustained load.
     return clamp(stress + load - 0.055 * recovery -
-                 (0.025 if supported else 0) - 0.08 * stress)
+                 (0.025 if supported else 0) - 0.15 * stress + 0.03)
 
 
 def next_mood(mood, stress, recovery, connected):
