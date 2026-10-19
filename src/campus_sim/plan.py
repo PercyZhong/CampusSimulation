@@ -14,8 +14,14 @@ from society0.kernel.runner import RunContract, RunPlan
 from society0.kernel.runtime import DriverResult, runtime_plugin
 
 from . import SOCIETY0_SHA
-from .domain import (Config, action_choice, period_action_choice, period_available_actions,
-                     policy_context, scenario_context)
+from .domain import (
+    Config,
+    action_choice,
+    period_action_choice,
+    period_available_actions,
+    policy_context,
+    scenario_context,
+)
 from .mechanism import campus_plugin
 from .models import DECISION_PROMPT_VERSION, DIALOGUE_PROMPT_VERSION, ModelClient
 from .schedule import CURRENT_PERIOD, campus_schedule_plugin
@@ -93,14 +99,14 @@ def build(raw):
                  **({"period": period} if period else {})})
         args = {}
         if action == "peer":
-            invitation = await session.actions.invoke(
-                "campus.peer_invite", Ref("campus", "student", actor), {})
-            if invitation.status != "completed":
-                return DriverResult("completed", {"action": action,
-                    "status": invitation.status,
-                    "reason": (invitation.value or {}).get("reason"),
-                    **({"period": period} if period else {})}, "rule")
             if model_client is not None:
+                invitation = await session.actions.invoke(
+                    "campus.peer_invite", Ref("campus", "student", actor), {})
+                if invitation.status != "completed":
+                    return DriverResult("completed", {"action": action,
+                        "status": invitation.status,
+                        "reason": (invitation.value or {}).get("reason"),
+                        **({"period": period} if period else {})}, "rule")
                 peer_details = await session.information.read("/peer_dialogue/" + actor)
                 peer_context = json.loads(peer_details.data)
                 partner = invitation.value["partner"]

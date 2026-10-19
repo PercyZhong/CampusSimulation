@@ -488,11 +488,11 @@ def period_action_choice(student, day, period, config, service, course_slots=Non
     if period == "afternoon":
         if "accept_support" in available:
             return "accept_support"
-        if "request" in available:
-            if unit(config.seed, "afternoon_request", day, student["id"]) < clamp(
+        if ("request" in available and unit(
+                config.seed, "afternoon_request", day, student["id"]) < clamp(
                     0.22 + 0.45 * student["willingness"] +
-                    0.18 * student["help_seeking_belief"]):
-                return "request"
+                    0.18 * student["help_seeking_belief"])):
+            return "request"
         return "rest" if student["stress"] >= 0.65 or "peer" not in available else "peer"
     if period == "evening":
         return "rest" if student["stress"] >= 0.45 or "peer" not in available else "peer"

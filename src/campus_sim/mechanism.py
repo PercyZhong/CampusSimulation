@@ -16,9 +16,9 @@ from .domain import (
     next_mood,
     next_stress,
     peer_response,
+    period_available_actions,
     policy_components,
     policy_context,
-    period_available_actions,
     relationship_type,
     residence_context,
     scenario_context,
@@ -79,7 +79,7 @@ class Campus:
         """Offer afternoon service to queued students in FIFO order first."""
         queued = self.store.read(lambda view: [row[0] for row in view.iter_query(
             "SELECT actor FROM campus_queue ORDER BY requested_day,ordinal")])
-        return tuple([*queued, *(actor for actor in actor_ids if actor not in queued)])
+        return (*queued, *(actor for actor in actor_ids if actor not in queued))
 
     @staticmethod
     def remember(state, event):
@@ -582,7 +582,7 @@ class Campus:
                     partner_state["connection"] = clamp(partner_state["connection"] + 0.004)
                     writer.execute("UPDATE campus_students SET body=? WHERE id=?",
                                    (dumps(partner_state), classmate))
-            elif action == "rest":
+            elif action == "rest" and (not period or period == "evening"):
                 residence = campus_calendar(self.config.seed, day, actor)["residence"]
                 arrivals = writer.query(
                     "SELECT actor,context FROM campus_interactions "
