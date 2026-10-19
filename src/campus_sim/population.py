@@ -24,6 +24,8 @@ def make_population(config):
                      "supported_day": None, "follow_up_sent": False,
                      "low_streak": 0, "ever_requested": False, "ever_supported": False,
                      "missed_course_streak": 0,
+                     "peer_attempt_day": None,
+                     "service_attempt_day": None,
                      "recovery_streak": 0, "setback_streak": 0,
                      "support_failure_streak": 0, "social_contact_streak": 0,
                      "academic_success_streak": 0,

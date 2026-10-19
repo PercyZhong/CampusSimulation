@@ -23,6 +23,7 @@ class Config:
     model_id: str | None = None
     max_model_calls: int = 0
     model_temperature: float = 0.2
+    periods_per_day: int = 1
     policy_components: dict = field(default_factory=dict)
 
     @classmethod
@@ -40,6 +41,8 @@ class Config:
             raise ValueError("invalid service settings")
         if value.n_staff < 1 or value.capacity > value.n_staff * 3:
             raise ValueError("capacity exceeds configured staff slots")
+        if type(value.periods_per_day) is not int or value.periods_per_day not in (1, 3):
+            raise ValueError("periods_per_day must be 1 or 3")
         if value.language_backend not in {"offline"}:
             raise ValueError("unsupported language backend")
         if value.driver not in {"rule", "llm"}:
@@ -47,7 +50,7 @@ class Config:
         if value.driver == "llm":
             from .models import validate
             validate(value.model_provider, value.model_id, value.max_model_calls)
-            minimum_calls = value.n_students * (value.end - value.start + 1)
+            minimum_calls = value.n_students * (value.end - value.start + 1) * value.periods_per_day
             if value.max_model_calls < minimum_calls:
                 raise ValueError(
                     f"max_model_calls must be at least {minimum_calls} for this run"
@@ -449,3 +452,48 @@ def action_choice(student, day, config):
     if other == "attend" and not campus_calendar(config.seed, day, sid)["course"]["open"]:
         return "rest"
     return other
+
+
+def period_available_actions(student, day, period, config, service, course_slots=None):
+    """Expose only actions compatible with the current campus time block."""
+    actions = ["rest", "peer"]
+    if period == "morning":
+        course = campus_calendar(config.seed, day, student["id"])["course"]
+        if course["open"] and (course_slots is None or course_slots > 0):
+            actions.insert(0, "attend")
+    elif period == "afternoon":
+        if service["open"]:
+            if (student["pending_day"] is not None and service["queue_turn"]
+                    and service["slots_remaining"] > 0):
+                actions.append("accept_support")
+            elif (student["pending_day"] is None and not student["supported"]
+                    and policy_context(config, student, day)["request_available_today"]):
+                actions.append("request")
+    elif period != "evening":
+        raise ValueError(f"unknown period: {period}")
+    if student.get("service_attempt_day") == day:
+        actions = [item for item in actions if item not in {"request", "accept_support"}]
+    return actions
+
+
+def period_action_choice(student, day, period, config, service, course_slots=None):
+    """Choose one feasible action per period without blocking daily life in a queue."""
+    available = period_available_actions(student, day, period, config, service,
+                                         course_slots)
+    if period == "morning":
+        if "attend" in available and unit(config.seed, "morning_attend", day, student["id"]) < clamp(
+                0.55 + 0.3 * student["academic_engagement"] - 0.15 * student["stress"]):
+            return "attend"
+        return "rest" if student["stress"] >= 0.6 or "peer" not in available else "peer"
+    if period == "afternoon":
+        if "accept_support" in available:
+            return "accept_support"
+        if "request" in available:
+            if unit(config.seed, "afternoon_request", day, student["id"]) < clamp(
+                    0.22 + 0.45 * student["willingness"] +
+                    0.18 * student["help_seeking_belief"]):
+                return "request"
+        return "rest" if student["stress"] >= 0.65 or "peer" not in available else "peer"
+    if period == "evening":
+        return "rest" if student["stress"] >= 0.45 or "peer" not in available else "peer"
+    raise ValueError(f"unknown period: {period}")

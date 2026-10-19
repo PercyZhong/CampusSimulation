@@ -65,6 +65,32 @@ def test_two_day_completed_action_and_export(tmp_path):
     assert 0 <= summary["mood_distribution"]["mean"] <= 1
 
 
+def test_three_period_day_has_one_action_per_student_and_period(tmp_path):
+    import asyncio
+
+    from society0.kernel.runner import run_plan
+
+    from campus_sim.analysis import export
+    from campus_sim.plan import build
+
+    raw = {"end": 2, "n_students": 4, "periods_per_day": 3, "seed": 11}
+    path = tmp_path / "three-periods"
+    asyncio.run(run_plan(path, build(raw)))
+    summary = export(path)
+    events = [json.loads(line) for line in (path / "events.jsonl").read_text(
+        encoding="utf-8").splitlines()]
+    actions = [event for event in events if event["action"] in {
+        "attend", "rest", "peer", "request", "accept_support"}]
+    periods = {(event["day"], event["actor"], event["detail"].get("period"))
+               for event in actions}
+    assert len(periods) == 2 * 4 * 3
+    assert all(sum((event["day"], event["actor"], event["detail"].get("period")) == key
+                   for event in actions) == 1 for key in periods)
+    assert all(event["detail"].get("period") == "morning" for event in actions
+               if event["action"] == "attend")
+    assert summary["complete_steps"] == 2
+
+
 def test_targeted_outreach_records_actual_reach_and_window(tmp_path):
     import asyncio
 

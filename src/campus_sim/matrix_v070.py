@@ -59,6 +59,8 @@ def _config(condition, seed, driver):
             spec["n_students"], spec["n_staff"], condition):
         raise ValueError(f"base configuration differs from protocol: {condition}")
     public = asdict(parsed)
+    if "periods_per_day" not in raw:
+        public.pop("periods_per_day")
     public["release"] = raw.get("release", {"scenario": "0.6.0"})
     digest = hashlib.sha256(json.dumps(public, sort_keys=True,
                             separators=(",", ":")).encode()).hexdigest()

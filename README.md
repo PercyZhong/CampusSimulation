@@ -1,5 +1,17 @@
 # CampusSimulation
 
+## V073 三时段校园日程
+
+新配置 `configs/three_period_baseline.json` 启用 `periods_per_day: 3`。学生每天在上午、下午、晚上各选择一次行动。课程只在上午开放，求助申请与服务仅在下午开放；排队期间上午仍可上课，其他时段可休息或进行同伴互动。服务名额及队列顺序仍生效。轨迹报告现在显示时段、行动状态及拒绝原因。旧配置默认每天一次行动，既有 V070 运行结果不变。
+
+规则驱动试运行：
+
+```bash
+python -m campus_sim.cli run --config configs/three_period_baseline.json --output runs/v073-three-period-rule
+python -m campus_sim.cli export runs/v073-three-period-rule
+python -m campus_sim.cli trajectory-report runs/v073-three-period-rule
+```
+
 ## V072 长期状态与记忆扩展（开发中）
 
 在 V070 冻结结果之外，当前开发版本增加了长期状态联动、恢复与反复恶化计数、伙伴回应历史与冲突置信度、重要事件记忆衰减，以及滚动窗口轨迹重新分类和类型转移统计。该版本需要在 Linux 环境完成测试后再建立新的评估协议。

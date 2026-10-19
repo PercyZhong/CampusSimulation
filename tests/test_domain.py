@@ -16,6 +16,8 @@ from campus_sim.domain import (
     peer_response,
     policy_components,
     policy_context,
+    period_action_choice,
+    period_available_actions,
     residence_context,
     unit,
     update_long_term_memory,
@@ -208,6 +210,24 @@ def test_partner_memory_changes_rule_peer_choice(monkeypatch):
     student["long_term_memory"]["partners"]["s001"] = {
         "contacts": 2, "last_day": 1, "salience": 0.5, "last_response": "accepted"}
     assert action_choice(student, 1, base) == "peer"
+
+
+def test_period_actions_keep_waiting_students_active():
+    config = Config(periods_per_day=3)
+    student = make_population(config)[0][0]
+    student["pending_day"] = 1
+    waiting = {"open": True, "queue_turn": False, "slots_remaining": 2}
+    assert "attend" in period_available_actions(student, 2, "morning", config, waiting)
+    assert "accept_support" not in period_available_actions(
+        student, 2, "afternoon", config, waiting)
+    assert period_action_choice(student, 2, "afternoon", config, waiting) in {"rest", "peer"}
+    ready = {"open": True, "queue_turn": True, "slots_remaining": 1}
+    assert period_action_choice(student, 2, "afternoon", config, ready) == "accept_support"
+    assert "accept_support" not in period_available_actions(
+        student, 2, "evening", config, ready)
+    assert period_available_actions(student, 2, "evening", config, ready) == ["rest", "peer"]
+    with pytest.raises(ValueError, match="periods_per_day"):
+        Config.parse({"periods_per_day": 2})
 
 
 def test_offline_language_is_reproducible():

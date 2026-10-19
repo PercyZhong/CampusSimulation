@@ -18,6 +18,7 @@ from .domain import (
     peer_response,
     policy_components,
     policy_context,
+    period_available_actions,
     relationship_type,
     residence_context,
     scenario_context,
@@ -28,6 +29,7 @@ from .domain import (
 from .language import language_backend
 from .models import _dialogue
 from .population import make_population, make_staff
+from .schedule import CURRENT_PERIOD
 
 SCHEMA = (
     "CREATE TABLE campus_students(id TEXT NOT NULL PRIMARY KEY, body TEXT NOT NULL)",
@@ -72,6 +74,12 @@ class Campus:
     def students(self):
         return self.store.read(lambda view: [json.loads(row[0]) for row in
             view.iter_query("SELECT body FROM campus_students ORDER BY id")])
+
+    def afternoon_order(self, actor_ids):
+        """Offer afternoon service to queued students in FIFO order first."""
+        queued = self.store.read(lambda view: [row[0] for row in view.iter_query(
+            "SELECT actor FROM campus_queue ORDER BY requested_day,ordinal")])
+        return tuple([*queued, *(actor for actor in actor_ids if actor not in queued)])
 
     @staticmethod
     def remember(state, event):
@@ -205,7 +213,8 @@ class Campus:
         if target.key != scope.actor:
             return ActionResult("rejected", {"reason": "wrong_actor"})
         self.store.transaction(lambda writer: self.event(
-            writer, scope.moment.time, scope.actor, "model_decision", "completed", detail=detail))
+            writer, scope.moment.time, scope.actor, "model_decision", "completed",
+            detail={**detail, "period": CURRENT_PERIOD.get()} if CURRENT_PERIOD.get() else detail))
         return ActionResult("completed", {"action": detail["action"]})
 
     def peer_invite(self, scope, target):
@@ -214,6 +223,15 @@ class Campus:
             return ActionResult("rejected", {"reason": "wrong_actor"})
 
         def write(writer):
+            period = CURRENT_PERIOD.get() if self.config.periods_per_day == 3 else None
+            if period:
+                state_row = writer.query("SELECT body FROM campus_students WHERE id=?",
+                                         (actor,), max_rows=1)
+                state = json.loads(state_row[0][0])
+                if "peer" not in period_available_actions(
+                        state, day, period, self.config,
+                        {"open": False, "queue_turn": False, "slots_remaining": 0}):
+                    return {"status": "rejected", "reason": "period_unavailable"}
             existing = writer.query(
                 "SELECT partner,response FROM campus_peer_invitations WHERE day=? AND actor=?",
                 (day, actor), max_rows=1)
@@ -244,7 +262,8 @@ class Campus:
                 "SELECT CASE WHEN a=? THEN b ELSE a END FROM campus_edges "
                 "WHERE a=? OR b=? ORDER BY 1", (actor, actor, actor))
             if not peers:
-                self.event(writer, day, actor, "peer", "rejected", "no_peer_edge")
+                self.event(writer, day, actor, "peer", "rejected", "no_peer_edge",
+                           {"period": CURRENT_PERIOD.get()} if CURRENT_PERIOD.get() else None)
                 return {"status": "rejected", "reason": "no_peer_edge"}
             recent = writer.query(
                 "SELECT partner,response FROM campus_peer_invitations "
@@ -253,7 +272,8 @@ class Campus:
             excluded = {partner for partner, _ in recent}
             peers = [row for row in peers if row[0] not in excluded]
             if not peers:
-                self.event(writer, day, actor, "peer", "rejected", "invitation_cooldown")
+                self.event(writer, day, actor, "peer", "rejected", "invitation_cooldown",
+                           {"period": CURRENT_PERIOD.get()} if CURRENT_PERIOD.get() else None)
                 return {"status": "rejected", "reason": "invitation_cooldown"}
             partner = peers[int(unit(self.config.seed, "peer_partner", day, actor)
                                 * len(peers))][0]
@@ -264,6 +284,7 @@ class Campus:
             response = peer_response(self.config.seed, day, actor, partner, partner_state, relation)
             actor_state = json.loads(writer.query(
                 "SELECT body FROM campus_students WHERE id=?", (actor,), max_rows=1)[0][0])
+            actor_state["peer_attempt_day"] = day
             update_long_term_memory(actor_state,
                 {"day": day, "action": "peer_invitation", "partner": partner,
                  "response": response})
@@ -286,7 +307,9 @@ class Campus:
                 self.event(writer, day, actor, "peer", "rejected", response,
                            detail={"partner": partner, "partner_response": response,
                                    "response_reason": ("partner_unavailable" if response == "rejected"
-                                                       else "no_reply_before_deadline")})
+                                                       else "no_reply_before_deadline"),
+                                   **({"period": CURRENT_PERIOD.get()}
+                                      if CURRENT_PERIOD.get() else {})})
             return {"status": "completed" if response == "accepted" else "rejected",
                     "partner": partner, "response": response,
                     "reason": response if response != "accepted" else None}
@@ -314,6 +337,36 @@ class Campus:
             if not rows:
                 return {"status": "rejected", "reason": "unknown_actor"}
             state = json.loads(rows[0][0])
+            period = CURRENT_PERIOD.get() if self.config.periods_per_day == 3 else None
+            if period:
+                already = any(json.loads(detail).get("period") == period
+                              for (detail,) in writer.iter_query(
+                    "SELECT detail FROM campus_events WHERE day=? AND actor=? "
+                    "AND action IN ('attend','rest','peer','request','accept_support')",
+                    (day, actor)))
+                if already:
+                    return {"status": "rejected", "reason": "period_already_used"}
+                service_open = day % policy_components(self.config)["service"]["open_every"] == 0
+                head = writer.query(
+                    "SELECT actor FROM campus_queue ORDER BY requested_day,ordinal LIMIT 1")
+                used = writer.query("SELECT used FROM campus_service_usage WHERE day=?", (day,))
+                remaining = min(self.available_slots(writer, day),
+                                policy_components(self.config)["service"]["capacity"]) - (
+                    used[0][0] if used else 0) - self.follow_up_slots_used(writer, day)
+                available_actions = period_available_actions(
+                    state, day, period, self.config,
+                    {"open": service_open, "queue_turn": bool(head and head[0][0] == actor),
+                     "slots_remaining": max(0, remaining)})
+                if action == "peer" and state.get("peer_attempt_day") == day:
+                    invitation = writer.query(
+                        "SELECT response FROM campus_peer_invitations WHERE day=? AND actor=?",
+                        (day, actor), max_rows=1)
+                    if invitation and invitation[0][0] == "accepted":
+                        available_actions.append("peer")
+                if action not in available_actions:
+                    self.event(writer, day, actor, action, "rejected", "period_unavailable",
+                               {"period": period})
+                    return {"status": "rejected", "reason": "period_unavailable"}
             before = {key: state[key] for key in ("stress", "mood", "recovery", "connection",
                                                    "academic_engagement", "self_efficacy",
                                                    "belonging", "help_seeking_belief", "social_avoidance")}
@@ -322,6 +375,8 @@ class Campus:
                 reason = "already_pending"
             if action == "request" and state["supported"]:
                 reason = "already_supported"
+            if action == "request" and period and state.get("service_attempt_day") == day:
+                reason = "service_attempt_today"
             open_every = policy_components(self.config)["service"]["open_every"]
             if action == "request" and day % open_every != 0:
                 reason = "service_closed"
@@ -334,13 +389,16 @@ class Campus:
                 assigned_staff = self.next_staff(writer, day)
                 if state["pending_day"] is None:
                     reason = "no_pending_request"
+                elif period and state.get("service_attempt_day") == day:
+                    reason = "service_attempt_today"
                 elif day % open_every != 0:
                     reason = "service_closed"
                 elif not first or first[0][0] != actor:
                     reason = "queue_turn"
                 elif (assigned_staff is None
                       or (used[0][0] if used else 0) + self.follow_up_slots_used(writer, day)
-                      >= self.available_slots(writer, day)):
+                      >= min(self.available_slots(writer, day),
+                             policy_components(self.config)["service"]["capacity"])):
                     reason = "capacity_full"
             if action == "peer":
                 peers = writer.query(
@@ -368,8 +426,11 @@ class Campus:
             if reason:
                 detail = ({"context": context, "schedule": schedule,
                            "booked_slots": bookings} if action == "attend" else None)
-                self.event(writer, day, actor, action, "rejected", reason, detail)
+                self.event(writer, day, actor, action, "rejected", reason,
+                           {**(detail or {}), "period": period} if period else detail)
                 return {"status": "rejected", "reason": reason}
+            if period and action in {"request", "accept_support"}:
+                state["service_attempt_day"] = day
             if action == "request":
                 ordinal = writer.query("SELECT COALESCE(MAX(ordinal),0)+1 FROM campus_queue")[0][0]
                 writer.execute("INSERT INTO campus_queue VALUES(?,?,?)", (actor, day, ordinal))
@@ -546,6 +607,8 @@ class Campus:
                             for key in before if state[key] != before[key]}
             if detail is None:
                 detail = {}
+            if period:
+                detail["period"] = period
             if residence_detail is not None:
                 detail.update(residence_detail)
             detail["feedback"] = feedback
@@ -763,11 +826,22 @@ class CampusInformation:
             components = policy_components(self.campus.config)
             barrier = intervention_effects(self.campus.config, self.campus.student(scope.actor),
                                            scope.moment.time)["effective_access_barrier"]
+            def queue_status(view):
+                first = view.query("SELECT actor FROM campus_queue ORDER BY requested_day,ordinal LIMIT 1")
+                used = view.query("SELECT used FROM campus_service_usage WHERE day=?",
+                                  (scope.moment.time,))
+                remaining = min(components["service"]["capacity"],
+                                self.campus.available_slots(view, scope.moment.time)) - (
+                    used[0][0] if used else 0) - self.campus.follow_up_slots_used(
+                        view, scope.moment.time)
+                return {"queue_turn": bool(first and first[0][0] == scope.actor),
+                        "slots_remaining": max(0, remaining)}
             data = {"open": scope.moment.time % components["service"]["open_every"] == 0,
                     "capacity": components["service"]["capacity"],
                     "access_barrier": barrier,
                     "available_slots": self.campus.store.read(lambda view:
-                        self.campus.available_slots(view, scope.moment.time))}
+                        self.campus.available_slots(view, scope.moment.time)),
+                    **self.campus.store.read(queue_status)}
         elif ref.kind == "course":
             calendar = campus_calendar(self.campus.config.seed, scope.moment.time, scope.actor)
             scheduled = calendar["course"]
@@ -839,7 +913,8 @@ def campus_plugin(config):
             "action": {"type": "string"}, "provider": {"type": "string"},
             "model": {"type": "string"}, "temperature": {"type": "number"},
             "prompt_version": {"type": "string"}, "decision_context": {"type": "object"},
-            "policy": {"type": "object"}, "usage": {"type": "object"}},
+            "policy": {"type": "object"}, "usage": {"type": "object"},
+            "period": {"type": "string"}},
             "required": ["action", "provider", "model", "temperature", "prompt_version",
                          "decision_context", "policy", "usage"],
             "additionalProperties": False}

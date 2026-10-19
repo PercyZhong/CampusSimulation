@@ -88,11 +88,13 @@ def selected_actions(events):
     """Use LLM decisions when present, otherwise student action attempts."""
     decisions = [event for event in events if event["action"] == "model_decision"
                  and event["status"] == "completed"]
-    source = decisions if decisions else [event for event in events
-                                         if event["action"] in ACTION_NAMES
-                                         and event["status"] in {"completed", "rejected"}]
+    decisions_by_actor = {event["actor"] for event in decisions}
+    source = decisions + [event for event in events
+                          if event["actor"] not in decisions_by_actor
+                          and event["action"] in ACTION_NAMES
+                          and event["status"] in {"completed", "rejected"}]
     return [(event["actor"], event["day"], event["ordinal"], action)
-            for event in source
+            for event in sorted(source, key=lambda item: item["ordinal"])
             if (action := event["detail"].get("action", event["action"])) in ACTION_NAMES]
 
 
@@ -133,9 +135,20 @@ def trajectory_assessment(events, students, complete_step, window_days=7):
     selected = selected_actions(events)
     by_student = {student["id"]: [] for student in students}
     daily = defaultdict(Counter)
+    outcome_events = [event for event in events if event["action"] in ACTION_NAMES
+                      and event["status"] in {"completed", "rejected"}]
+    outcomes = {(event["day"], event["actor"], event["detail"].get("period")):
+                event for event in outcome_events}
+    by_ordinal = {event["ordinal"]: event for event in events}
     for actor, day, ordinal, action in selected:
+        source = by_ordinal[ordinal]
+        period = source["detail"].get("period")
+        outcome = (outcomes.get((day, actor, period))
+                   if source["action"] == "model_decision" else source)
         by_student.setdefault(actor, []).append({"day": day, "ordinal": ordinal,
-                                                  "action": action})
+                                                  "action": action, "period": period,
+                                                  "status": (outcome or source)["status"],
+                                                  "reason": (outcome or source).get("reason")})
         daily[day][action] += 1
     for path in by_student.values():
         path.sort(key=lambda item: (item["day"], item["ordinal"]))
@@ -782,7 +795,7 @@ def trajectory_report(run_dir):
 <script id="data" type="application/json">""" + payload + """</script>
 <script>const report=JSON.parse(document.getElementById('data').textContent);const esc=s=>String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 types.textContent=JSON.stringify(report.trajectory_type_counts,null,2);isolation.textContent=JSON.stringify(report.isolation_status_counts,null,2);
-for(const [id,row] of Object.entries(report.students)){students.insertAdjacentHTML('beforeend',`<tr><td>${esc(id)}</td><td>${esc(row.trajectory_type)}</td><td>${esc(row.isolation_status)}</td><td>${row.action_days}</td><td>${esc(row.action_path.map(x=>x.day+':'+x.action).join(' → '))}</td></tr>`)}
+for(const [id,row] of Object.entries(report.students)){students.insertAdjacentHTML('beforeend',`<tr><td>${esc(id)}</td><td>${esc(row.trajectory_type)}</td><td>${esc(row.isolation_status)}</td><td>${row.action_days}</td><td>${esc(row.action_path.map(x=>x.day+(x.period ? '/'+x.period : '')+':'+x.action+(x.status==='rejected' ? '['+x.status+(x.reason ? ':'+x.reason : '')+']' : '')).join(' → '))}</td></tr>`)}
 const c=document.getElementById('daily').getContext('2d'), rows=report.daily_action_counts, names=report.action_names, max=Math.max(1,...rows.map(r=>names.reduce((n,a)=>n+r[a],0))); c.font='12px system-ui'; rows.forEach((r,i)=>{let x=35+i*(930/Math.max(1,rows.length)), y=270; for(const a of names){let h=r[a]/max*220;c.fillStyle={attend:'#4c78a8',rest:'#f2a541',peer:'#59a14f',request:'#e15759',accept_support:'#b279a2'}[a]||'#999';c.fillRect(x,y-h,18,h);y-=h} c.fillStyle='#172337';c.fillText(r.day,x,290)});</script>
 """
     (output / "trajectory-report.html").write_text(html, encoding="utf-8")

@@ -14,10 +14,11 @@ from society0.kernel.runner import RunContract, RunPlan
 from society0.kernel.runtime import DriverResult, runtime_plugin
 
 from . import SOCIETY0_SHA
-from .domain import Config, action_choice, policy_context, scenario_context
+from .domain import (Config, action_choice, period_action_choice, period_available_actions,
+                     policy_context, scenario_context)
 from .mechanism import campus_plugin
 from .models import DECISION_PROMPT_VERSION, DIALOGUE_PROMPT_VERSION, ModelClient
-from .schedule import campus_schedule_plugin
+from .schedule import CURRENT_PERIOD, campus_schedule_plugin
 
 
 def _git_sha():
@@ -48,18 +49,28 @@ def build(raw):
         service = await session.information.read("/service")
         peers = await session.information.read("/peers/" + actor)
         state = json.loads(chunk.data)
+        period = CURRENT_PERIOD.get() if config.periods_per_day == 3 else None
+        service_data = json.loads(service.data)
+        calendar = json.loads(course.data)
         if model_client is None:
-            action = action_choice(state, session.moment.time, config)
+            action = (period_action_choice(state, session.moment.time, period, config,
+                                           service_data, calendar["course_available_slots"])
+                      if period else
+                      action_choice(state, session.moment.time, config))
         else:
             policy = policy_context(config, state, session.moment.time)
-            calendar = json.loads(course.data)
-            if (not calendar["calendar"]["course"]["open"]
+            if period:
+                policy["available_actions"] = period_available_actions(
+                    state, session.moment.time, period, config, service_data,
+                    calendar["course_available_slots"])
+                policy["period"] = period
+            elif (not calendar["calendar"]["course"]["open"]
                     or calendar["course_available_slots"] == 0):
                 policy["available_actions"] = [action for action in policy["available_actions"]
                                                if action != "attend"]
             action, usage = model_client.decide(
                 day=session.moment.time, student=state, course=calendar,
-                service=json.loads(service.data), peers=json.loads(peers.data), policy=policy)
+                service=service_data, peers=json.loads(peers.data), policy=policy)
             await session.actions.invoke("campus.model_decision", Ref("campus", "student", actor),
                 {"action": action, "provider": config.model_provider,
                  "model": config.model_id, "temperature": config.model_temperature,
@@ -78,7 +89,8 @@ def build(raw):
                          "academic_engagement", "self_efficacy", "belonging",
                          "help_seeking_belief", "social_avoidance")},
                  },
-                 "policy": policy, "usage": usage})
+                 "policy": policy, "usage": usage,
+                 **({"period": period} if period else {})})
         args = {}
         if action == "peer":
             invitation = await session.actions.invoke(
@@ -86,7 +98,8 @@ def build(raw):
             if invitation.status != "completed":
                 return DriverResult("completed", {"action": action,
                     "status": invitation.status,
-                    "reason": (invitation.value or {}).get("reason")}, "rule")
+                    "reason": (invitation.value or {}).get("reason"),
+                    **({"period": period} if period else {})}, "rule")
             if model_client is not None:
                 peer_details = await session.information.read("/peer_dialogue/" + actor)
                 peer_context = json.loads(peer_details.data)
@@ -107,7 +120,8 @@ def build(raw):
         result = await session.actions.invoke("campus." + action,
                                                Ref("campus", "student", actor), args)
         return DriverResult("completed", {"action": action, "status": result.status,
-                                           "reason": (result.value or {}).get("reason")}, "rule")
+                                           "reason": (result.value or {}).get("reason"),
+                                           **({"period": period} if period else {})}, "rule")
 
     def allows(scope, operation, target):
         if target.namespace != "campus":
@@ -126,9 +140,12 @@ def build(raw):
                               information=("interaction", "information"),
                               actions=("interaction", "actions"), store=("storage", "store"),
                               results=("results", "results"),
-                              max_activations=config.n_students + config.n_staff),
+                              max_activations=config.n_students * config.periods_per_day +
+                              config.n_staff),
                campus_schedule_plugin(config, ids, staff_ids)]
     public = asdict(config)
+    if "periods_per_day" not in raw:
+        public.pop("periods_per_day")
     public["release"] = raw.get("release", {"scenario": "0.6.0"})
     config_hash = hashlib.sha256(json.dumps(public, sort_keys=True,
                                 separators=(",", ":")).encode()).hexdigest()
@@ -140,6 +157,7 @@ def build(raw):
                            {config.model_provider: config.model_id} if model_client else {}),
                        "config_sha256": config_hash, "driver": config.driver},
         time={"start": config.start, "end": config.end, "unit": "day"},
-        budgets={"max_activations": config.n_students + config.n_staff,
+        budgets={"max_activations": config.n_students * config.periods_per_day +
+                 config.n_staff,
                  "http_requests": config.max_model_calls,
                  "paid_model_calls": config.max_model_calls}))
