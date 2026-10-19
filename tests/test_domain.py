@@ -203,6 +203,8 @@ def test_social_state_rewards_diminish_and_do_not_reward_rest():
     assert state["self_efficacy"] == 0.5
     assert state["belonging"] == 0.99
     update_long_term_state(state, action="peer", outcome="completed")
+    assert state["belonging"] == 0.99
+    update_long_term_state(state, action="peer", outcome="completed")
     assert 0.99 < state["belonging"] < 1
     assert 0 < state["social_avoidance"] < 0.01
 
