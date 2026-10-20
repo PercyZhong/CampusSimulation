@@ -11,19 +11,71 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from .event_view import read_events
+from .domain import Config
 from .models import choices, require_key, validate
 
-CONDITIONS = ("baseline", "outreach", "easier_access")
+CONDITIONS = ("baseline", "outreach", "easier_access", "targeted_outreach")
 SEEDS = (11, 22, 33)
+MAX_STUDENTS = 100
+MAX_STAFF = 10
+MAX_DAYS = 30
 RUN_NAME = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}\Z")
+
+
+def build_run_config(project, data):
+    """Build a bounded, validated experiment from an existing policy template."""
+    condition = data.get("condition")
+    if condition not in CONDITIONS:
+        raise ValueError("invalid condition")
+    fields = {
+        "n_students": (2, MAX_STUDENTS), "n_staff": (1, MAX_STAFF),
+        "days": (1, MAX_DAYS), "seed": (0, 999999),
+        "periods_per_day": (1, 3), "capacity": (1, MAX_STAFF * 3),
+        "open_every": (1, 7), "outreach_day": (1, MAX_DAYS),
+    }
+    values = {}
+    for key, (minimum, maximum) in fields.items():
+        value = data.get(key)
+        if type(value) is not int or not minimum <= value <= maximum:
+            raise ValueError(f"{key} must be an integer between {minimum} and {maximum}")
+        values[key] = value
+    if values["periods_per_day"] not in (1, 3):
+        raise ValueError("periods_per_day must be 1 or 3")
+    if values["capacity"] > values["n_staff"] * 3:
+        raise ValueError("capacity exceeds staff slots")
+    barrier = data.get("access_barrier")
+    if type(barrier) not in (int, float) or not 0 <= barrier <= 1:
+        raise ValueError("access_barrier must be between 0 and 1")
+    raw = json.loads((project / "configs" / f"{condition}.json").read_text(encoding="utf-8"))
+    raw.update(n_students=values["n_students"], n_staff=values["n_staff"],
+               end=values["days"], seed=values["seed"],
+               periods_per_day=values["periods_per_day"],
+               capacity=values["capacity"], open_every=values["open_every"],
+               outreach_day=values["outreach_day"], access_barrier=barrier)
+    components = raw.setdefault("policy_components", {})
+    components.setdefault("service", {}).update(capacity=values["capacity"],
+                                                  open_every=values["open_every"])
+    if "information_delivery" in components:
+        components["information_delivery"]["day"] = values["outreach_day"]
+    provider = data.get("provider")
+    if provider is not None:
+        validate(provider, data.get("model"), data.get("max_model_calls"))
+        require_key(provider)
+        raw.update(driver="llm", model_provider=provider, model_id=data["model"],
+                   max_model_calls=data["max_model_calls"],
+                   model_temperature=data.get("temperature", 0.2))
+    elif set(data) & {"model", "max_model_calls", "temperature"}:
+        raise ValueError("model settings require provider")
+    Config.parse(raw)
+    return raw
 PAGE = """<!doctype html><html lang="zh"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>CampusSimulation</title><style>body{font:16px system-ui;margin:2rem auto;max-width:1050px;padding:0 1rem;background:#f5f7fb;color:#172337}h1{margin-bottom:0}small{color:#526279}.box{background:white;padding:1.2rem;border-radius:12px;margin:1rem 0;box-shadow:0 1px 4px #ccd4e0}button,select,input{font:inherit;padding:.5rem;margin:.25rem}button{background:#1756a9;color:white;border:0;border-radius:6px;cursor:pointer}table{border-collapse:collapse;width:100%}td,th{padding:.5rem;border-bottom:1px solid #dce2eb;text-align:left}pre{white-space:pre-wrap;overflow:auto}canvas{max-width:100%}</style>
 <h1>CampusSimulation</h1><small>未校准的合成校园情景；不能用于真实学生诊断、个人风险判断或政策效果预测。</small>
-<div class="box"><h2>运行实验</h2><label>条件 <select id="condition"><option>baseline</option><option>outreach</option><option>easier_access</option></select></label><label>种子 <select id="seed"><option>11</option><option>22</option><option>33</option></select></label><label>天数 <input id="days" type="number" min="1" max="30" value="30"></label><label>决策方式 <select id="driver" onchange="renderModels()"><option value="rule">离线规则</option><option value="llm">真实 LLM API</option></select></label><label>提供商 <select id="provider" onchange="renderModels()"></select></label><label>模型 <input id="model" list="modelSuggestions" placeholder="模型 ID"></label><datalist id="modelSuggestions"></datalist><label>温度 <input id="temperature" type="number" min="0" max="2" step="0.1" value="0.2"></label><label>每次运行最多调用 <input id="maxCalls" type="number" min="1" value="1200"></label><p>API 密钥在启动服务前通过环境变量设置；页面不会接收密钥。30 天单次运行至少需要 1200 次调用；3×3 批量实验至少需要 10800 次。</p><button onclick="launch()">启动新运行</button><button onclick="launchBatch()">启动 3×3 对照</button><p id="message"></p></div>
-<div class="box"><h2>已有运行</h2><button onclick="refresh()">刷新</button><div id="jobs"></div><table><thead><tr><th>名称</th><th>模型</th><th>条件</th><th>天数</th><th>求助率</th><th>支持率</th><th>等待天数</th></tr></thead><tbody id="runs"></tbody></table></div>
+<div class="box"><h2>构建校园实验</h2><label>政策条件 <select id="condition"><option>baseline</option><option>outreach</option><option>easier_access</option><option>targeted_outreach</option></select></label><label>随机种子 <input id="seed" type="number" min="0" max="999999" value="11"></label><label>学生人数 <input id="nStudents" type="number" min="2" max="100" value="40"></label><label>辅导员人数 <input id="nStaff" type="number" min="1" max="10" value="2"></label><label>运行天数 <input id="days" type="number" min="1" max="30" value="10"></label><label>每日决策时段 <select id="periods"><option value="1">一次</option><option value="3">上午、下午、晚上</option></select></label><label>每日服务名额 <input id="capacity" type="number" min="1" max="30" value="3"></label><label>服务开放间隔（天） <input id="openEvery" type="number" min="1" max="7" value="1"></label><label>基线求助门槛 <input id="barrier" type="number" min="0" max="1" step="0.01" value="0.22"></label><label>外展投递日 <input id="outreachDay" type="number" min="1" max="30" value="5"></label><p><small>上限：学生 100 人、辅导员 10 人、30 天。每日服务名额不能超过辅导员人数的 3 倍。外展投递日仅影响外展条件。</small></p><label>决策方式 <select id="driver" onchange="renderModels()"><option value="rule">离线规则</option><option value="llm">真实 LLM API</option></select></label><label>提供商 <select id="provider" onchange="renderModels()"></select></label><label>模型 <input id="model" list="modelSuggestions" placeholder="模型 ID"></label><datalist id="modelSuggestions"></datalist><label>温度 <input id="temperature" type="number" min="0" max="2" step="0.1" value="0.2"></label><label>每次运行最多调用 <input id="maxCalls" type="number" min="1" value="1200"></label><p><small>模型调用预算至少为学生人数 × 天数 × 每日时段数；同伴对话还会增加调用。API 密钥只从启动服务的环境变量读取。</small></p><button onclick="launch()">启动新运行</button><button onclick="launchBatch()">启动固定 3×3 对照</button><p><small>固定 3×3 对照使用预设人数和天数，不使用上方自定义参数。</small></p><p id="message"></p></div>
+<div class="box"><h2>已有运行</h2><button onclick="refresh()">刷新</button><div id="jobs"></div><table><thead><tr><th>名称</th><th>模型</th><th>条件</th><th>学生</th><th>辅导员</th><th>天数</th><th>求助率</th><th>支持率</th><th>等待天数</th></tr></thead><tbody id="runs"></tbody></table></div>
 <div class="box"><h2>批处理结果</h2><div id="batches">暂无结果。</div></div>
 <div class="box"><h2>选中运行</h2><div id="detail">请选择一个运行。</div><canvas id="chart" width="900" height="260"></canvas></div>
-<div class="box"><h2>行动轨迹</h2><p>仅显示合成主体的导出事件。每页最多 100 条。</p><label>模拟日 <input id="eventDay" type="number" min="1" max="30" placeholder="全部"></label><label>行动 <select id="eventAction"><option value="">全部</option><option>attend</option><option>course_absence</option><option>rest</option><option>peer</option><option>request</option><option>accept_support</option><option>staff_shift</option><option>model_decision</option><option>outreach_information</option><option>staff_follow_up</option></select></label><button onclick="loadEvents(0)">筛选</button><p id="eventStatus">请选择一个运行。</p><table><thead><tr><th>日</th><th>主体</th><th>行动</th><th>状态</th><th>原因或详情</th></tr></thead><tbody id="events"></tbody></table><button onclick="previousEvents()">上一页</button><button onclick="nextEvents()">下一页</button></div>
+<div class="box"><h2>主体行动轨迹</h2><p>选择学生或辅导员查看其事件；辅导员轨迹包括值班和其承接的支持服务。每页 50 条。</p><label>主体 <select id="eventActor" onchange="loadEvents(0)"><option value="">全部主体</option></select></label><label>模拟日 <input id="eventDay" type="number" min="1" max="30" placeholder="全部"></label><label>行动 <select id="eventAction"><option value="">全部</option><option>attend</option><option>course_absence</option><option>rest</option><option>peer</option><option>request</option><option>accept_support</option><option>staff_shift</option><option>model_decision</option><option>outreach_information</option><option>staff_follow_up</option></select></label><button onclick="loadEvents(0)">筛选</button><p id="eventStatus">请选择一个运行。</p><table><thead><tr><th>日</th><th>时段</th><th>主体</th><th>行动</th><th>状态</th><th>原因或详情</th></tr></thead><tbody id="events"></tbody></table><button onclick="previousEvents()">上一页</button><button onclick="nextEvents()">下一页</button></div>
 <script>
 const j=async u=>{const r=await fetch(u);if(!r.ok)throw Error(await r.text());return r.json()};
 const pct=x=>x==null?'—':(100*x).toFixed(1)+'%';
@@ -32,12 +84,13 @@ let providerInfo={};
 async function initModels(){providerInfo=await j('/api/models');let p=document.getElementById('provider');for(let [name,info] of Object.entries(providerInfo)){let o=document.createElement('option');o.value=name;o.textContent=name+(info.configured?' · 密钥已配置':' · 缺少密钥');p.append(o)}renderModels()}
 function renderModels(){let active=document.getElementById('driver').value==='llm';for(let id of ['provider','model','temperature','maxCalls'])document.getElementById(id).disabled=!active;let info=providerInfo[document.getElementById('provider').value];let list=document.getElementById('modelSuggestions');list.replaceChildren();if(info){for(let name of info.models){let o=document.createElement('option');o.value=name;list.append(o)}if(!list.dataset.provider||list.dataset.provider!==document.getElementById('provider').value)document.getElementById('model').value=info.models[0];list.dataset.provider=document.getElementById('provider').value}}
 function modelOptions(){if(document.getElementById('driver').value!=='llm')return {};return {provider:document.getElementById('provider').value,model:document.getElementById('model').value,temperature:Number(document.getElementById('temperature').value),max_model_calls:Number(document.getElementById('maxCalls').value)}}
-async function refresh(){try{let data=await j('/api/runs');let body=document.getElementById('runs');body.replaceChildren();for(let x of data.runs){let tr=document.createElement('tr');let model=x.driver==='llm'?x.model_provider+' / '+x.model_id:'离线规则';let values=[x.name,model,x.condition,x.complete_steps,pct(x.requested_rate),pct(x.supported_rate),x.completed_wait_mean_days==null?'—':x.completed_wait_mean_days.toFixed(2)];for(let v of values){let td=document.createElement('td');td.textContent=v;tr.append(td)}tr.style.cursor='pointer';tr.onclick=()=>show(x.name);body.append(tr)}document.getElementById('jobs').textContent=data.jobs.map(x=>x.name+'：'+x.status+(x.error?'（查看服务器状态文件）':'')).join('；');let b=document.getElementById('batches');b.replaceChildren();for(let run of data.batches){let p=document.createElement('p');p.textContent=run.name+'：'+run.status;b.append(p);if(run.by_condition){let table=document.createElement('table');let h=document.createElement('tr');for(let label of ['条件','平均求助率','平均支持率','平均等待天数','平均持续低联结率']){let th=document.createElement('th');th.textContent=label;h.append(th)}table.append(h);for(let [condition,m] of Object.entries(run.by_condition)){let tr=document.createElement('tr');for(let value of [condition,pct(m.requested_rate.mean),pct(m.supported_rate.mean),m.completed_wait_mean_days.mean?.toFixed(2)??'—',pct(m.low_connection_7d_rate.mean)]){let td=document.createElement('td');td.textContent=String(value);tr.append(td)}table.append(tr)}b.append(table)}}}catch(e){document.getElementById('message').textContent=e.message}}
-async function show(name){selectedRun=name;eventOffset=0;loadEvents(0);let x=await j('/api/runs/'+name);let d=document.getElementById('detail');d.textContent=`${x.summary.condition} · seed ${x.summary.seed} · ${x.summary.complete_steps} 天 · 持续低联结 ${pct(x.summary.low_connection_7d_rate)} · 压力均值 ${x.summary.stress_distribution.mean.toFixed(3)} · 压力平均变化 ${x.summary.stress_change_distribution?.mean?.toFixed(3)??'旧版无数据'}`;let c=document.getElementById('chart'),ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);let days=x.days;if(!days.length)return;ctx.strokeStyle='#1756a9';ctx.lineWidth=3;ctx.beginPath();days.forEach((p,i)=>{let X=35+i*(c.width-55)/Math.max(1,days.length-1),Y=230-p.mean_stress*195;i?ctx.lineTo(X,Y):ctx.moveTo(X,Y)});ctx.stroke();ctx.fillStyle='#172337';ctx.fillText('逐日平均压力（模型变量）',35,22);ctx.fillText('0',10,230);ctx.fillText('1',10,35)}
-async function loadEvents(offset){if(!selectedRun)return;try{let params=new URLSearchParams({offset:String(offset),limit:'50'});let day=document.getElementById('eventDay').value,action=document.getElementById('eventAction').value;if(day)params.set('day',day);if(action)params.set('action',action);let data=await j('/api/runs/'+selectedRun+'/events?'+params);eventOffset=data.offset;eventTotal=data.total;let body=document.getElementById('events');body.replaceChildren();for(let x of data.events){let tr=document.createElement('tr');for(let v of [x.day,x.actor,x.action,x.status,x.reason??JSON.stringify(x.detail??{})]){let td=document.createElement('td');td.textContent=String(v);tr.append(td)}body.append(tr)}document.getElementById('eventStatus').textContent=`${data.total} 条匹配事件；显示 ${data.total?data.offset+1:0}–${Math.min(data.total,data.offset+data.events.length)}`;}catch(e){document.getElementById('eventStatus').textContent=e.message}}
+async function refresh(){try{let data=await j('/api/runs');let body=document.getElementById('runs');body.replaceChildren();for(let x of data.runs){let tr=document.createElement('tr');let model=x.driver==='llm'?x.model_provider+' / '+x.model_id:'离线规则';let values=[x.name,model,x.condition,x.n_students,x.n_staff,x.complete_steps,pct(x.requested_rate),pct(x.supported_rate),x.completed_wait_mean_days==null?'—':x.completed_wait_mean_days.toFixed(2)];for(let v of values){let td=document.createElement('td');td.textContent=v;tr.append(td)}tr.style.cursor='pointer';tr.onclick=()=>show(x.name);body.append(tr)}document.getElementById('jobs').textContent=data.jobs.map(x=>x.name+'：'+x.status+(x.error?'（查看服务器状态文件）':'')).join('；');let b=document.getElementById('batches');b.replaceChildren();for(let run of data.batches){let p=document.createElement('p');p.textContent=run.name+'：'+run.status;b.append(p);if(run.by_condition){let table=document.createElement('table');let h=document.createElement('tr');for(let label of ['条件','平均求助率','平均支持率','平均等待天数','平均持续低联结率']){let th=document.createElement('th');th.textContent=label;h.append(th)}table.append(h);for(let [condition,m] of Object.entries(run.by_condition)){let tr=document.createElement('tr');for(let value of [condition,pct(m.requested_rate.mean),pct(m.supported_rate.mean),m.completed_wait_mean_days.mean?.toFixed(2)??'—',pct(m.low_connection_7d_rate.mean)]){let td=document.createElement('td');td.textContent=String(value);tr.append(td)}table.append(tr)}b.append(table)}}}catch(e){document.getElementById('message').textContent=e.message}}
+function actorOptions(summary){let select=document.getElementById('eventActor');select.replaceChildren();let all=document.createElement('option');all.value='';all.textContent='全部主体';select.append(all);for(let [prefix,count,label] of [['s',summary.n_students,'学生'],['c',summary.n_staff,'辅导员']]){let group=document.createElement('optgroup');group.label=label;for(let i=0;i<count;i++){let id=prefix+String(i).padStart(3,'0'),option=document.createElement('option');option.value=id;option.textContent=label+' '+id;group.append(option)}select.append(group)}}
+async function show(name){selectedRun=name;eventOffset=0;let x=await j('/api/runs/'+name);actorOptions(x.summary);document.getElementById('eventDay').value='';document.getElementById('eventAction').value='';loadEvents(0);let d=document.getElementById('detail');d.textContent=`${x.summary.condition} · seed ${x.summary.seed} · ${x.summary.n_students} 名学生 · ${x.summary.n_staff} 名辅导员 · ${x.summary.complete_steps} 天 · 求助 ${pct(x.summary.requested_rate)} · 获得支持 ${pct(x.summary.supported_rate)} · 持续低联结 ${pct(x.summary.low_connection_7d_rate)} · 压力均值 ${x.summary.stress_distribution.mean.toFixed(3)}`;let c=document.getElementById('chart'),ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);let days=x.days;if(!days.length)return;ctx.strokeStyle='#1756a9';ctx.lineWidth=3;ctx.beginPath();days.forEach((p,i)=>{let X=35+i*(c.width-55)/Math.max(1,days.length-1),Y=230-p.mean_stress*195;i?ctx.lineTo(X,Y):ctx.moveTo(X,Y)});ctx.stroke();ctx.fillStyle='#172337';ctx.fillText('逐日平均压力（模型变量）',35,22);ctx.fillText('0',10,230);ctx.fillText('1',10,35)}
+async function loadEvents(offset){if(!selectedRun)return;try{let params=new URLSearchParams({offset:String(offset),limit:'50'});let day=document.getElementById('eventDay').value,action=document.getElementById('eventAction').value,actor=document.getElementById('eventActor').value;if(day)params.set('day',day);if(action)params.set('action',action);if(actor)params.set('actor',actor);let data=await j('/api/runs/'+selectedRun+'/events?'+params);eventOffset=data.offset;eventTotal=data.total;let body=document.getElementById('events');body.replaceChildren();for(let x of data.events){let tr=document.createElement('tr');for(let v of [x.day,x.detail?.period??'—',x.actor,x.action,x.status,x.reason??JSON.stringify(x.detail??{})]){let td=document.createElement('td');td.textContent=String(v);tr.append(td)}body.append(tr)}document.getElementById('eventStatus').textContent=`${data.total} 条匹配事件；显示 ${data.total?data.offset+1:0}–${Math.min(data.total,data.offset+data.events.length)}`;}catch(e){document.getElementById('eventStatus').textContent=e.message}}
 function previousEvents(){loadEvents(Math.max(0,eventOffset-50))}
 function nextEvents(){if(eventOffset+50<eventTotal)loadEvents(eventOffset+50)}
-async function launch(){let m=document.getElementById('message');try{let r=await fetch('/api/runs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({condition:document.getElementById('condition').value,seed:Number(document.getElementById('seed').value),days:Number(document.getElementById('days').value),...modelOptions()})});let x=await r.json();if(!r.ok)throw Error(x.error);m.textContent='已启动 '+x.name+'；请稍后刷新。';}catch(e){m.textContent=e.message}}refresh();initModels();
+async function launch(){let m=document.getElementById('message');try{let number=id=>Number(document.getElementById(id).value);let data={condition:document.getElementById('condition').value,seed:number('seed'),n_students:number('nStudents'),n_staff:number('nStaff'),days:number('days'),periods_per_day:number('periods'),capacity:number('capacity'),open_every:number('openEvery'),access_barrier:number('barrier'),outreach_day:number('outreachDay'),...modelOptions()};let r=await fetch('/api/runs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});let x=await r.json();if(!r.ok)throw Error(x.error);m.textContent='已启动 '+x.name+'；运行完成后会出现在下方列表。';refresh()}catch(e){m.textContent=e.message}}refresh();initModels();setInterval(refresh,5000);
 async function launchBatch(){let m=document.getElementById('message');try{let r=await fetch('/api/batches',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(modelOptions())});let x=await r.json();if(!r.ok)throw Error(x.error);m.textContent='已启动 '+x.name+'；请稍后刷新。'}catch(e){m.textContent=e.message}}
 </script></html>"""
 
@@ -127,14 +180,15 @@ def create_handler(root):
                     return self.send_data(404, {"error": "run not found"})
                 try:
                     query = parse_qs(parsed.query, strict_parsing=True)
-                    if set(query) - {"day", "action", "offset", "limit"}:
+                    if set(query) - {"day", "action", "actor", "offset", "limit"}:
                         raise ValueError("unknown event filter")
                     day = int(query["day"][0]) if "day" in query else None
                     action = query["action"][0] if "action" in query else None
+                    actor = query["actor"][0] if "actor" in query else None
                     offset = int(query.get("offset", ["0"])[0])
                     limit = int(query.get("limit", ["50"])[0])
                     return self.send_data(200, read_events(root.joinpath(*parts),
-                        day=day, action=action, offset=offset, limit=limit))
+                        day=day, action=action, actor=actor, offset=offset, limit=limit))
                 except (ValueError, KeyError) as error:
                     return self.send_data(400, {"error": str(error)})
                 except OSError:
@@ -191,17 +245,16 @@ def create_handler(root):
             if self.path != "/api/runs":
                 return self.send_data(404, {"error": "not found"})
             try:
-                condition, seed, days = data["condition"], data["seed"], data["days"]
-                if condition not in CONDITIONS or type(seed) is not int or seed not in SEEDS:
-                    raise ValueError("invalid condition or seed")
-                if type(days) is not int or not 1 <= days <= 30:
-                    raise ValueError("days must be between 1 and 30")
-                name = f"{condition}-seed{seed}-{uuid.uuid4().hex[:8]}"
+                config_data = build_run_config(project, data)
+                name = f"{config_data['condition']}-seed{config_data['seed']}-{uuid.uuid4().hex[:8]}"
                 output = root / name
-                config = project / "configs" / f"{condition}.json"
+                config_dir = root / "configs"
+                config_dir.mkdir(exist_ok=True)
+                config = config_dir / f"{name}.json"
+                config.write_text(json.dumps(config_data, ensure_ascii=False, indent=2),
+                                  encoding="utf-8")
                 command = [sys.executable, "-m", "campus_sim.cli", "run", "--config",
-                           str(config), "--seed", str(seed), "--days", str(days),
-                           "--output", str(output), *options]
+                           str(config), "--output", str(output)]
                 spawn(command, name)
                 self.send_data(202, {"name": name})
             except (ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
