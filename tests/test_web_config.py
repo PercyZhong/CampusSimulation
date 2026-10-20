@@ -14,6 +14,7 @@ from campus_sim.web import (
     build_batch_plan,
     build_run_config,
     list_run_summaries,
+    read_job_progress,
     read_run_detail,
     run_name,
     save_run_config,
@@ -129,6 +130,61 @@ def test_online_key_reaches_only_child_environment_not_saved_configs(tmp_path, m
         saved = (tmp_path / "configs" / f"{single_name}.json").read_text(encoding="utf-8")
         assert "secret-for-this-run" not in saved
         assert captured[1][1] == "secret-for-this-run"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_single_run_progress_uses_completed_society0_steps(tmp_path):
+    configs = tmp_path / "configs"
+    configs.mkdir()
+    (configs / "single.json").write_text('{"end": 10}', encoding="utf-8")
+    run = tmp_path / "single"
+    run.mkdir()
+    assert read_job_progress(tmp_path, "single", "running")["percent"] == 0
+    (run / "runner-status.json").write_text('{"complete_step": 3}', encoding="utf-8")
+    progress = read_job_progress(tmp_path, "single", "running")
+    assert (progress["percent"], progress["completed"], progress["total"]) == (30, 3, 10)
+    (run / "runner-status.json").write_text('{"complete_step": 10}', encoding="utf-8")
+    assert read_job_progress(tmp_path, "single", "running")["percent"] == 99
+    assert read_job_progress(tmp_path, "single", "complete")["percent"] == 100
+
+
+def test_batch_progress_aggregates_completed_days_across_runs(tmp_path):
+    configs = tmp_path / "configs"
+    configs.mkdir()
+    plan = {"runs": [{"name": "baseline-seed11", "config": {"end": 4}},
+                     {"name": "outreach-seed11", "config": {"end": 6}}]}
+    (configs / "batch-demo.json").write_text(json.dumps(plan), encoding="utf-8")
+    for name, done in (("baseline-seed11", 4), ("outreach-seed11", 2)):
+        run = tmp_path / "batch-demo" / name
+        run.mkdir(parents=True)
+        (run / "runner-status.json").write_text(
+            json.dumps({"complete_step": done}), encoding="utf-8"
+        )
+    progress = read_job_progress(tmp_path, "batch-demo", "running", batch=True)
+    assert progress == {"percent": 60, "completed": 6, "total": 10,
+                        "finished_runs": 1, "run_count": 2}
+
+
+def test_runs_endpoint_exposes_live_progress(tmp_path):
+    configs = tmp_path / "configs"
+    configs.mkdir()
+    (configs / "single.json").write_text('{"end": 10}', encoding="utf-8")
+    (tmp_path / "single.status.json").write_text('{"status": "running"}', encoding="utf-8")
+    run = tmp_path / "single"
+    run.mkdir()
+    (run / "runner-status.json").write_text('{"complete_step": 4}', encoding="utf-8")
+    server = ThreadingHTTPServer(("127.0.0.1", 0), web.create_handler(tmp_path))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{server.server_port}/api/runs", timeout=5
+        ) as response:
+            data = json.load(response)
+        assert data["jobs"][0]["progress"]["percent"] == 40
     finally:
         server.shutdown()
         server.server_close()
