@@ -43,6 +43,7 @@ def main(argv=None):
     _model_options(run)
     batch = sub.add_parser("batch")
     batch.add_argument("--configs", default="configs")
+    batch.add_argument("--plan")
     batch.add_argument("--output", default="runs/experiment")
     _model_options(batch)
     analyzed = sub.add_parser("export")
@@ -155,15 +156,23 @@ def main(argv=None):
         return 0
     root = Path(args.output)
     summaries = []
-    conditions = ("baseline", "outreach", "easier_access", "targeted_outreach")
-    for condition in conditions:
-        for seed in (11, 22, 33):
-            config = _config(Path(args.configs) / f"{condition}.json", seed,
-                             provider=args.provider, model=args.model,
-                             max_calls=args.max_model_calls, temperature=args.temperature)
-            path = root / f"{condition}-seed{seed}"
-            asyncio.run(run_plan(path, build(config)))
-            summaries.append(export(path))
+    if args.plan:
+        plan = json.loads(Path(args.plan).read_text(encoding="utf-8"))
+        conditions = plan["conditions"]
+        seeds = plan["seeds"]
+        runs = plan["runs"]
+    else:
+        conditions = ("baseline", "outreach", "easier_access", "targeted_outreach")
+        seeds = (11, 22, 33)
+        runs = [{"name": f"{condition}-seed{seed}",
+                 "config": _config(Path(args.configs) / f"{condition}.json", seed,
+                                   provider=args.provider, model=args.model,
+                                   max_calls=args.max_model_calls, temperature=args.temperature)}
+                for condition in conditions for seed in seeds]
+    for item in runs:
+        path = root / item["name"]
+        asyncio.run(run_plan(path, build(item["config"])))
+        summaries.append(export(path))
     aggregate = {}
     for condition in conditions:
         subset = [s for s in summaries if s["condition"] == condition]
@@ -185,7 +194,8 @@ def main(argv=None):
                 "n_seeds": len(values),
             }
     comparison = {"schema_version": 1, "runs": summaries, "by_condition": aggregate,
-                  "interpretation": "uncalibrated model-internal scenario results; three seeds imply no significance"}
+                  "conditions": list(conditions), "seeds": list(seeds),
+                  "interpretation": "uncalibrated model-internal scenario results; seed repeats imply no significance"}
     root.mkdir(parents=True, exist_ok=True)
     (root / "comparison.json").write_text(json.dumps(comparison, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(json.dumps({"runs": len(summaries), "comparison": str(root / "comparison.json")}))
