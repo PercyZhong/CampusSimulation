@@ -1,5 +1,6 @@
 """Loopback-only workbench for synthetic Society0 experiments."""
 
+import csv
 import json
 import re
 import subprocess
@@ -68,6 +69,28 @@ def list_run_summaries(root):
             continue
     runs.sort(key=lambda item: (item["started_at"], item["name"]), reverse=True)
     return runs
+
+
+def read_run_detail(run):
+    """Read a run even when optional daily metric cells are blank."""
+    summary = json.loads((run / "summary.json").read_text(encoding="utf-8"))
+    days = []
+    try:
+        with (run / "daily_metrics.csv").open(encoding="utf-8", newline="") as stream:
+            for row in csv.DictReader(stream):
+                parsed = {}
+                for key, value in row.items():
+                    if value in (None, ""):
+                        parsed[key] = None
+                    else:
+                        try:
+                            parsed[key] = float(value)
+                        except ValueError:
+                            parsed[key] = value
+                days.append(parsed)
+    except (OSError, csv.Error) as error:
+        return {"summary": summary, "days": [], "daily_metrics_error": str(error)}
+    return {"summary": summary, "days": days}
 
 
 def build_run_config(project, data):
@@ -184,7 +207,20 @@ function clearDisplayed(){
 }
 function restoreDisplayed(){hiddenNames.clear();localStorage.removeItem('campus-sim-hidden-runs');renderRuns()}
 function actorOptions(summary){let select=document.getElementById('eventActor');select.replaceChildren();let all=document.createElement('option');all.value='';all.textContent='全部主体';select.append(all);for(let [prefix,count,label] of [['s',summary.n_students,'学生'],['c',summary.n_staff,'辅导员']]){let group=document.createElement('optgroup');group.label=label;for(let i=0;i<count;i++){let id=prefix+String(i).padStart(3,'0'),option=document.createElement('option');option.value=id;option.textContent=label+' '+id;group.append(option)}select.append(group)}}
-async function show(name){selectedRun=name;eventOffset=0;let x=await j('/api/runs/'+name);actorOptions(x.summary);document.getElementById('eventDay').value='';document.getElementById('eventAction').value='';loadEvents(0);let d=document.getElementById('detail');d.textContent=`${x.summary.condition} · seed ${x.summary.seed} · ${x.summary.n_students} 名学生 · ${x.summary.n_staff} 名辅导员 · ${x.summary.complete_steps} 天 · 求助 ${pct(x.summary.requested_rate)} · 获得支持 ${pct(x.summary.supported_rate)} · 持续低联结 ${pct(x.summary.low_connection_7d_rate)} · 压力均值 ${x.summary.stress_distribution.mean.toFixed(3)}`;let c=document.getElementById('chart'),ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);let days=x.days;if(!days.length)return;ctx.strokeStyle='#1756a9';ctx.lineWidth=3;ctx.beginPath();days.forEach((p,i)=>{let X=35+i*(c.width-55)/Math.max(1,days.length-1),Y=230-p.mean_stress*195;i?ctx.lineTo(X,Y):ctx.moveTo(X,Y)});ctx.stroke();ctx.fillStyle='#172337';ctx.fillText('逐日平均压力（模型变量）',35,22);ctx.fillText('0',10,230);ctx.fillText('1',10,35)}
+async function show(name){
+  let d=document.getElementById('detail');
+  try{
+    let x=await j('/api/runs/'+name);selectedRun=name;eventOffset=0;
+    actorOptions(x.summary);document.getElementById('eventDay').value='';document.getElementById('eventAction').value='';loadEvents(0);
+    d.textContent=`${x.summary.condition} · seed ${x.summary.seed} · ${x.summary.n_students} 名学生 · ${x.summary.n_staff} 名辅导员 · ${x.summary.complete_steps} 天 · 求助 ${pct(x.summary.requested_rate)} · 获得支持 ${pct(x.summary.supported_rate)} · 持续低联结 ${pct(x.summary.low_connection_7d_rate)} · 压力均值 ${x.summary.stress_distribution.mean.toFixed(3)}`;
+    if(x.daily_metrics_error)d.textContent+=' · 每日指标读取失败：'+x.daily_metrics_error;
+    let c=document.getElementById('chart'),ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);
+    let days=x.days.filter(p=>Number.isFinite(p.mean_stress));if(!days.length)return;
+    ctx.strokeStyle='#1756a9';ctx.lineWidth=3;ctx.beginPath();
+    days.forEach((p,i)=>{let X=35+i*(c.width-55)/Math.max(1,days.length-1),Y=230-p.mean_stress*195;i?ctx.lineTo(X,Y):ctx.moveTo(X,Y)});
+    ctx.stroke();ctx.fillStyle='#172337';ctx.fillText('逐日平均压力（模型变量）',35,22);ctx.fillText('0',10,230);ctx.fillText('1',10,35)
+  }catch(e){selectedRun=null;d.textContent='无法打开运行 '+name+'：'+e.message}
+}
 async function loadEvents(offset){if(!selectedRun)return;try{let params=new URLSearchParams({offset:String(offset),limit:'50'});let day=document.getElementById('eventDay').value,action=document.getElementById('eventAction').value,actor=document.getElementById('eventActor').value;if(day)params.set('day',day);if(action)params.set('action',action);if(actor)params.set('actor',actor);let data=await j('/api/runs/'+selectedRun+'/events?'+params);eventOffset=data.offset;eventTotal=data.total;let body=document.getElementById('events');body.replaceChildren();for(let x of data.events){let tr=document.createElement('tr');for(let v of [x.day,x.detail?.period??'—',x.actor,x.action,x.status,x.reason??JSON.stringify(x.detail??{})]){let td=document.createElement('td');td.textContent=String(v);tr.append(td)}body.append(tr)}document.getElementById('eventStatus').textContent=`${data.total} 条匹配事件；显示 ${data.total?data.offset+1:0}–${Math.min(data.total,data.offset+data.events.length)}`;}catch(e){document.getElementById('eventStatus').textContent=e.message}}
 function previousEvents(){loadEvents(Math.max(0,eventOffset-50))}
 function nextEvents(){if(eventOffset+50<eventTotal)loadEvents(eventOffset+50)}
@@ -292,12 +328,7 @@ def create_handler(root):
             if parts and len(parts) <= 2 and all(RUN_NAME.fullmatch(part) for part in parts):
                 run = root.joinpath(*parts)
                 try:
-                    summary = json.loads((run / "summary.json").read_text(encoding="utf-8"))
-                    import csv
-                    with (run / "daily_metrics.csv").open(encoding="utf-8", newline="") as stream:
-                        days = [{key: float(value) for key, value in row.items()}
-                                for row in csv.DictReader(stream)]
-                    return self.send_data(200, {"summary": summary, "days": days})
+                    return self.send_data(200, read_run_detail(run))
                 except (OSError, ValueError):
                     pass
             self.send_data(404, {"error": "run not found"})

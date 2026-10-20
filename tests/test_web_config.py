@@ -4,7 +4,13 @@ from pathlib import Path
 
 import pytest
 
-from campus_sim.web import build_run_config, list_run_summaries, run_name, save_run_config
+from campus_sim.web import (
+    build_run_config,
+    list_run_summaries,
+    read_run_detail,
+    run_name,
+    save_run_config,
+)
 
 PROJECT = Path(__file__).resolve().parents[1]
 
@@ -57,3 +63,22 @@ def test_runs_sort_by_start_time_with_legacy_file_fallback(tmp_path):
         "status": "complete", "started_at": old_summary.stat().st_mtime + 10,
     }), encoding="utf-8")
     assert [item["name"] for item in list_run_summaries(tmp_path)] == [newer.name, old.name]
+
+
+def test_run_detail_accepts_blank_daily_metrics(tmp_path):
+    (tmp_path / "summary.json").write_text('{"condition":"baseline"}', encoding="utf-8")
+    (tmp_path / "daily_metrics.csv").write_text(
+        "day,mean_stress,optional,source\n1,0.25,,rule\n", encoding="utf-8"
+    )
+    detail = read_run_detail(tmp_path)
+    assert detail["summary"] == {"condition": "baseline"}
+    assert detail["days"] == [{"day": 1.0, "mean_stress": 0.25,
+                               "optional": None, "source": "rule"}]
+
+
+def test_run_detail_keeps_summary_when_daily_metrics_are_missing(tmp_path):
+    (tmp_path / "summary.json").write_text('{"condition":"baseline"}', encoding="utf-8")
+    detail = read_run_detail(tmp_path)
+    assert detail["summary"] == {"condition": "baseline"}
+    assert detail["days"] == []
+    assert "daily_metrics_error" in detail
