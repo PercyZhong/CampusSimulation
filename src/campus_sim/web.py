@@ -421,7 +421,7 @@ def create_handler(root):
                     raise ValueError("invalid request size")
                 data = json.loads(self.rfile.read(length))
                 if not isinstance(data, dict):
-                    raise ValueError("request body must be an object")
+                    raise TypeError("request body must be an object")
                 provider = data.get("provider")
                 api_key = data.get("api_key")
                 if api_key is not None and (not isinstance(api_key, str)
