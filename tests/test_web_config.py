@@ -4,7 +4,6 @@ import pytest
 
 from campus_sim.web import build_run_config
 
-
 PROJECT = Path(__file__).resolve().parents[1]
 
 

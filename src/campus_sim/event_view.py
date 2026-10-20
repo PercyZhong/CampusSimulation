@@ -32,9 +32,10 @@ def read_events(run_dir, *, day=None, action=None, actor=None, offset=0, limit=5
                 continue
             if action is not None and event["action"] != action:
                 continue
-            if actor is not None and event["actor"] != actor:
-                if not (actor.startswith("c") and event.get("detail", {}).get("staff_id") == actor):
-                    continue
+            if (actor is not None and event["actor"] != actor
+                    and not (actor.startswith("c")
+                             and event.get("detail", {}).get("staff_id") == actor)):
+                continue
             if offset <= total < offset + limit:
                 page.append(event)
             total += 1

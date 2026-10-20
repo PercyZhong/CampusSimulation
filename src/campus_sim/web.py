@@ -10,8 +10,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from .event_view import read_events
 from .domain import Config
+from .event_view import read_events
 from .models import choices, require_key, validate
 
 CONDITIONS = ("baseline", "outreach", "easier_access", "targeted_outreach")
