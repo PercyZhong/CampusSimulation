@@ -155,7 +155,8 @@ def main(argv=None):
         return 0
     root = Path(args.output)
     summaries = []
-    for condition in ("baseline", "outreach", "easier_access"):
+    conditions = ("baseline", "outreach", "easier_access", "targeted_outreach")
+    for condition in conditions:
         for seed in (11, 22, 33):
             config = _config(Path(args.configs) / f"{condition}.json", seed,
                              provider=args.provider, model=args.model,
@@ -164,7 +165,7 @@ def main(argv=None):
             asyncio.run(run_plan(path, build(config)))
             summaries.append(export(path))
     aggregate = {}
-    for condition in ("baseline", "outreach", "easier_access"):
+    for condition in conditions:
         subset = [s for s in summaries if s["condition"] == condition]
         aggregate[condition] = {}
         for metric in ("requested_count", "requested_rate", "supported_count", "supported_rate",
