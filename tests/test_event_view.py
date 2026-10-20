@@ -46,6 +46,19 @@ def test_course_absence_is_a_filterable_action(tmp_path):
     assert read_events(tmp_path, action="course_absence")["events"] == [event]
 
 
+def test_timeline_filters_peer_response_from_expanded_action_list(tmp_path):
+    events = [
+        {"day": 1, "actor": "s000", "action": "peer_invitation", "status": "completed"},
+        {"day": 1, "actor": "s001", "action": "peer_response", "status": "accepted"},
+    ]
+    (tmp_path / "events.jsonl").write_text(
+        "".join(json.dumps(event) + "\n" for event in events), encoding="utf-8"
+    )
+    page = read_timeline(tmp_path, action="peer_response")
+    assert page["total"] == 1
+    assert page["rows"][0]["events"] == events[1:]
+
+
 def test_actor_filter_includes_staff_service_events(tmp_path):
     events = [
         {"day": 1, "actor": "c000", "action": "staff_shift", "detail": {}},

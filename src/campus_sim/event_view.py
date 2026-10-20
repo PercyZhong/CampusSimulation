@@ -15,7 +15,9 @@ def _validate_filters(day, action, actor, offset, limit):
         raise ValueError("day must be a positive integer")
     if action is not None and action not in {
         "attend", "rest", "peer", "request", "accept_support", "outreach_information",
-        "staff_shift", "model_decision", "staff_follow_up", "course_absence"
+        "staff_shift", "model_decision", "staff_follow_up", "course_absence",
+        "peer_invitation", "peer_response", "peer_callback", "study_group",
+        "intervention_exposure", "scenario_trigger"
     }:
         raise ValueError("unknown action")
     if actor is not None and (not isinstance(actor, str) or not actor or
