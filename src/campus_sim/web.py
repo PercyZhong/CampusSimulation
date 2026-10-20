@@ -249,7 +249,7 @@ PAGE = """<!doctype html><html lang="zh"><meta charset="utf-8"><meta name="viewp
 <div class="box"><h2>自定义对照实验</h2><p>选择政策并输入随机种子；对照中的每次运行共用上方的学生、辅导员、天数、服务和决策参数。</p><div id="batchPolicies"><label><input type="checkbox" value="baseline" checked>baseline</label><label><input type="checkbox" value="outreach" checked>outreach</label><label><input type="checkbox" value="easier_access" checked>easier_access</label><label><input type="checkbox" value="targeted_outreach" checked>targeted_outreach</label></div><label>随机种子列表 <input id="batchSeeds" type="text" value="11,22,33" placeholder="例如 11,22,33"></label><p><small>可选 1–4 种政策、1–10 个不重复种子，最多 40 次运行。单次运行的政策和种子输入框不影响此对照。</small></p><button onclick="launchBatch()">启动自定义对照</button><p id="batchMessage"></p></div>
 <div class="box"><h2>已有运行</h2><button onclick="refresh()">刷新</button><button onclick="clearDisplayed()">清空显示</button><small id="hiddenCount"></small><div id="jobs"></div><table><thead><tr><th>名称</th><th>模型</th><th>条件</th><th>学生</th><th>辅导员</th><th>天数</th><th>求助率</th><th>支持率</th><th>等待天数</th><th>操作</th></tr></thead><tbody id="runs"></tbody></table><small>“删除记录”和“清空显示”会永久移除网页显示，无法在页面恢复；实验文件和日志仍保留在本地。</small></div>
 <div class="box"><h2>独立批处理结果</h2><p><small>这里列出各批次政策 × 种子的整体汇总，不随下方“选中运行”切换；旧批次保留原来的实验组合。</small></p><div id="batches">暂无结果。</div></div>
-<div class="box"><h2>选中运行</h2><div id="detail">请选择一个运行。</div><canvas id="chart" width="900" height="260"></canvas></div>
+<div class="box"><h2>选中运行</h2><div id="detail">请选择一个运行。</div><div style="overflow-x:auto"><canvas id="chart" width="900" height="320" style="max-width:none"></canvas></div></div>
 <div class="box"><h2>主体行动轨迹</h2><p>每天按辅导员、学生的编号升序排列；每位主体每天占一行，行动按发生顺序连接。辅导员轨迹包含值班和其承接的服务。每页 50 行。</p><label>主体 <select id="eventActor" onchange="loadEvents(0)"><option value="">全部主体</option></select></label><label>模拟日 <input id="eventDay" type="number" min="1" max="30" placeholder="全部"></label><label>行动 <select id="eventAction"><option value="">全部</option><option>attend</option><option>course_absence</option><option>rest</option><option>peer</option><option>request</option><option>accept_support</option><option>staff_shift</option><option>model_decision</option><option>outreach_information</option><option>staff_follow_up</option></select></label><button onclick="loadEvents(0)">筛选</button><p id="eventStatus">请选择一个运行。</p><table><thead><tr><th>日</th><th>主体</th><th>行动顺序</th><th>状态与详情</th></tr></thead><tbody id="events"></tbody></table><button onclick="previousEvents()">上一页</button><button onclick="nextEvents()">下一页</button></div>
 <script>
 const j=async u=>{const r=await fetch(u);if(!r.ok)throw Error(await r.text());return r.json()};
@@ -330,14 +330,49 @@ async function show(name){
   try{
     let x=await j('/api/runs/'+name);selectedRun=name;eventOffset=0;
     actorOptions(x.summary);document.getElementById('eventDay').value='';document.getElementById('eventAction').value='';loadEvents(0);
-    d.textContent=`${name} · ${x.summary.condition} · seed ${x.summary.seed} · ${x.summary.n_students} 名学生 · ${x.summary.n_staff} 名辅导员 · ${x.summary.complete_steps} 天 · 求助 ${pct(x.summary.requested_rate)} · 获得支持 ${pct(x.summary.supported_rate)} · 持续低联结 ${pct(x.summary.low_connection_7d_rate)} · 压力均值 ${x.summary.stress_distribution.mean.toFixed(3)}`;
-    if(x.daily_metrics_error)d.textContent+=' · 每日指标读取失败：'+x.daily_metrics_error;
-    let c=document.getElementById('chart'),ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);
-    let days=x.days.filter(p=>Number.isFinite(p.mean_stress));if(!days.length)return;
-    ctx.strokeStyle='#1756a9';ctx.lineWidth=3;ctx.beginPath();
-    days.forEach((p,i)=>{let X=35+i*(c.width-55)/Math.max(1,days.length-1),Y=230-p.mean_stress*195;i?ctx.lineTo(X,Y):ctx.moveTo(X,Y)});
-    ctx.stroke();ctx.fillStyle='#172337';ctx.fillText('逐日平均压力（模型变量）',35,22);ctx.fillText('0',10,230);ctx.fillText('1',10,35)
+    d.replaceChildren();let summary=document.createElement('table');
+    for(let [label,value] of [
+      ['实验名称',name],['学生人数',x.summary.n_students+' 名'],['辅导员人数',x.summary.n_staff+' 名'],
+      ['运行天数',x.summary.complete_steps+' 天'],['求助率',pct(x.summary.requested_rate)],
+      ['获得支持率',pct(x.summary.supported_rate)],['持续低联结率',pct(x.summary.low_connection_7d_rate)],
+      ['压力均值',x.summary.stress_distribution.mean.toFixed(3)]
+    ]){let row=document.createElement('tr'),key=document.createElement('th'),valueCell=document.createElement('td');key.scope='row';key.style.width='140px';key.textContent=label;valueCell.textContent=value;valueCell.style.overflowWrap='anywhere';row.append(key,valueCell);summary.append(row)}
+    d.append(summary);
+    if(x.daily_metrics_error){let error=document.createElement('p');error.textContent='每日指标读取失败：'+x.daily_metrics_error;d.append(error)}
+    drawStressChart(x.days)
   }catch(e){selectedRun=null;d.textContent='无法打开运行 '+name+'：'+e.message}
+}
+function drawStressChart(metrics){
+  let c=document.getElementById('chart'),ctx=c.getContext('2d');
+  let days=metrics.filter(p=>Number.isFinite(p.day)).sort((a,b)=>a.day-b.day);
+  let first=days.length?days[0].day:1,last=days.length?days[days.length-1].day:1;
+  c.width=Math.max(700,(last-first+1)*75+90);c.height=320;
+  ctx.font='14px system-ui';ctx.fillStyle='#172337';
+  ctx.fillText('逐日平均压力（模型变量）',55,25);
+  if(!days.some(p=>Number.isFinite(p.mean_stress))){ctx.fillText('暂无每日压力数据',55,65);return}
+  let left=55,right=c.width-40,top=80,bottom=280;
+  let X=day=>left+(day-first)*(right-left)/Math.max(1,last-first),Y=value=>bottom-value*(bottom-top);
+  ctx.lineWidth=1;
+  for(let value of [0,.25,.5,.75,1]){
+    ctx.strokeStyle='#dce2eb';ctx.beginPath();ctx.moveTo(left,Y(value));ctx.lineTo(right,Y(value));ctx.stroke();
+    ctx.fillStyle='#526279';ctx.textAlign='right';ctx.fillText(String(value),left-10,Y(value)+5)
+  }
+  ctx.textAlign='center';
+  for(let day=first;day<=last;day++){
+    ctx.fillStyle='#172337';ctx.fillText('第 '+day+' 天',X(day),58);
+    ctx.strokeStyle='#edf0f5';ctx.beginPath();ctx.moveTo(X(day),top);ctx.lineTo(X(day),bottom);ctx.stroke()
+  }
+  ctx.strokeStyle='#1756a9';ctx.lineWidth=3;ctx.beginPath();let previous=null;
+  for(let p of days){
+    if(!Number.isFinite(p.mean_stress)){previous=null;continue}
+    if(previous!==null&&p.day===previous+1)ctx.lineTo(X(p.day),Y(p.mean_stress));else ctx.moveTo(X(p.day),Y(p.mean_stress));
+    previous=p.day
+  }
+  ctx.stroke();
+  for(let p of days.filter(p=>Number.isFinite(p.mean_stress))){
+    ctx.fillStyle='#1756a9';ctx.beginPath();ctx.arc(X(p.day),Y(p.mean_stress),4,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#172337';ctx.fillText(p.mean_stress.toFixed(3),X(p.day),Y(p.mean_stress)-12)
+  }
 }
 async function loadEvents(offset){
   if(!selectedRun)return;
