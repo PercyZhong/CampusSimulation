@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from .analysis import export, verify_resume
+from .naming import run_stem
 from .plan import build
 
 
@@ -164,11 +165,13 @@ def main(argv=None):
     else:
         conditions = ("baseline", "outreach", "easier_access", "targeted_outreach")
         seeds = (11, 22, 33)
-        runs = [{"name": f"{condition}-seed{seed}",
-                 "config": _config(Path(args.configs) / f"{condition}.json", seed,
-                                   provider=args.provider, model=args.model,
-                                   max_calls=args.max_model_calls, temperature=args.temperature)}
-                for condition in conditions for seed in seeds]
+        runs = []
+        for condition in conditions:
+            for seed in seeds:
+                config = _config(Path(args.configs) / f"{condition}.json", seed,
+                                 provider=args.provider, model=args.model,
+                                 max_calls=args.max_model_calls, temperature=args.temperature)
+                runs.append({"name": run_stem(condition, seed, config), "config": config})
     for item in runs:
         path = root / item["name"]
         asyncio.run(run_plan(path, build(item["config"])))

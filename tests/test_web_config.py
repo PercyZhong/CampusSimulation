@@ -51,8 +51,8 @@ def test_batch_plan_uses_selected_policies_seeds_and_shared_controls():
     data = payload(conditions=["baseline", "targeted_outreach"], seeds=[7, 19])
     plan = build_batch_plan(PROJECT, data)
     assert [run["name"] for run in plan["runs"]] == [
-        "baseline-seed7", "baseline-seed19",
-        "targeted_outreach-seed7", "targeted_outreach-seed19",
+        "baseline-rule-seed7", "baseline-rule-seed19",
+        "targeted_outreach-rule-seed7", "targeted_outreach-rule-seed19",
     ]
     assert all(run["config"]["n_students"] == 12 for run in plan["runs"])
     assert all(run["config"]["end"] == 8 for run in plan["runs"])
@@ -80,6 +80,7 @@ def test_online_key_is_used_only_for_validation_and_not_saved(monkeypatch):
     plan = build_batch_plan(PROJECT, data, api_key="secret-for-this-run")
     assert "secret-for-this-run" not in json.dumps(plan)
     assert plan["runs"][0]["config"]["model_provider"] == "deepseek"
+    assert plan["runs"][0]["name"] == "baseline-llm-deepseek-deepseek-chat-seed11"
 
 
 def test_online_key_reaches_only_child_environment_not_saved_configs(tmp_path, monkeypatch):
@@ -191,16 +192,94 @@ def test_runs_endpoint_exposes_live_progress(tmp_path):
         thread.join(timeout=5)
 
 
+def test_deleted_record_stays_hidden_while_experiment_file_remains(tmp_path):
+    name = "baseline-rule-seed11-202610201103"
+    run = tmp_path / name
+    run.mkdir()
+    summary = run / "summary.json"
+    summary.write_text('{"condition": "baseline"}', encoding="utf-8")
+    server = ThreadingHTTPServer(("127.0.0.1", 0), web.create_handler(tmp_path))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        base = f"http://127.0.0.1:{server.server_port}"
+        with urllib.request.urlopen(base + "/api/runs", timeout=5) as response:
+            assert json.load(response)["runs"][0]["name"] == name
+        request = urllib.request.Request(
+            base + "/api/hidden-runs", json.dumps({"names": [name]}).encode("utf-8"),
+            {"Content-Type": "application/json", "Host": "127.0.0.1:18766",
+             "Origin": "http://127.0.0.1:18766"},
+        )
+        with urllib.request.urlopen(request, timeout=5) as response:
+            assert json.load(response)["hidden_count"] == 1
+        with urllib.request.urlopen(base + "/api/runs", timeout=5) as response:
+            assert json.load(response)["runs"] == []
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+    assert summary.is_file()
+    assert web.read_hidden_names(tmp_path) == {name}
+
+
+def test_llm_model_name_with_dot_is_a_valid_run_route(tmp_path):
+    name = "baseline-llm-openai-gpt-4.1-seed11-202610201103"
+    run = tmp_path / name
+    run.mkdir()
+    (run / "summary.json").write_text('{"condition": "baseline"}', encoding="utf-8")
+    server = ThreadingHTTPServer(("127.0.0.1", 0), web.create_handler(tmp_path))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{server.server_port}/api/runs/{name}", timeout=5
+        ) as response:
+            assert json.load(response)["summary"]["condition"] == "baseline"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_hiding_batch_parent_also_hides_its_child_runs(tmp_path):
+    child = tmp_path / "batch-demo" / "baseline-rule-seed11"
+    child.mkdir(parents=True)
+    (child / "summary.json").write_text('{"condition": "baseline"}', encoding="utf-8")
+    (tmp_path / "batch-demo.status.json").write_text(
+        '{"status": "complete"}', encoding="utf-8"
+    )
+    web.hide_record_names(tmp_path, ["batch-demo"])
+    server = ThreadingHTTPServer(("127.0.0.1", 0), web.create_handler(tmp_path))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{server.server_port}/api/runs", timeout=5
+        ) as response:
+            data = json.load(response)
+        assert data["runs"] == []
+        assert data["batches"] == []
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+    assert (child / "summary.json").is_file()
+
+
 def test_run_names_use_shanghai_minute_and_reserve_collisions(tmp_path):
     when = datetime(2026, 10, 20, 3, 3, tzinfo=UTC)
-    assert run_name("baseline", 11, when) == "baseline-seed11-202610201103"
+    assert run_name("baseline", 11, when) == "baseline-rule-seed11-202610201103"
     data = {"condition": "baseline", "seed": 11}
     first, first_path = save_run_config(tmp_path, data, when)
     second, second_path = save_run_config(tmp_path, data, when)
-    assert first == "baseline-seed11-202610201103"
-    assert second == "baseline-seed11-202610201103-2"
+    assert first == "baseline-rule-seed11-202610201103"
+    assert second == "baseline-rule-seed11-202610201103-2"
     assert json.loads(first_path.read_text(encoding="utf-8")) == data
     assert second_path.is_file()
+    llm = {"driver": "llm", "model_provider": "openai", "model_id": "gpt-4.1"}
+    assert run_name("baseline", 11, when, config=llm) == (
+        "baseline-llm-openai-gpt-4.1-seed11-202610201103"
+    )
 
 
 def test_runs_sort_by_start_time_with_legacy_file_fallback(tmp_path):
