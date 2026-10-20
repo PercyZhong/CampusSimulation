@@ -120,7 +120,7 @@ PAGE = """<!doctype html><html lang="zh"><meta charset="utf-8"><meta name="viewp
 <title>CampusSimulation</title><style>body{font:16px system-ui;margin:2rem auto;max-width:1050px;padding:0 1rem;background:#f5f7fb;color:#172337}h1{margin-bottom:0}small{color:#526279}.box{background:white;padding:1.2rem;border-radius:12px;margin:1rem 0;box-shadow:0 1px 4px #ccd4e0}button,select,input{font:inherit;padding:.5rem;margin:.25rem}button{background:#1756a9;color:white;border:0;border-radius:6px;cursor:pointer}table{border-collapse:collapse;width:100%}td,th{padding:.5rem;border-bottom:1px solid #dce2eb;text-align:left}pre{white-space:pre-wrap;overflow:auto}canvas{max-width:100%}</style>
 <h1>CampusSimulation</h1><small>未校准的合成校园情景；不能用于真实学生诊断、个人风险判断或政策效果预测。</small>
 <div class="box"><h2>构建校园实验</h2><label>政策条件 <select id="condition"><option>baseline</option><option>outreach</option><option>easier_access</option><option>targeted_outreach</option></select></label><label>随机种子 <input id="seed" type="number" min="0" max="999999" value="11"></label><label>学生人数 <input id="nStudents" type="number" min="2" max="100" value="40"></label><label>辅导员人数 <input id="nStaff" type="number" min="1" max="10" value="2"></label><label>运行天数 <input id="days" type="number" min="1" max="30" value="10"></label><label>每日决策时段 <select id="periods"><option value="1">一次</option><option value="3">上午、下午、晚上</option></select></label><label>每日服务名额 <input id="capacity" type="number" min="1" max="30" value="3"></label><label>服务开放间隔（天） <input id="openEvery" type="number" min="1" max="7" value="1"></label><label>基线求助门槛 <input id="barrier" type="number" min="0" max="1" step="0.01" value="0.22"></label><label>外展投递日 <input id="outreachDay" type="number" min="1" max="30" value="5"></label><p><small>上限：学生 100 人、辅导员 10 人、30 天。每日服务名额不能超过辅导员人数的 3 倍。外展投递日仅影响外展条件。</small></p><label>决策方式 <select id="driver" onchange="renderModels()"><option value="rule">离线规则</option><option value="llm">真实 LLM API</option></select></label><label>提供商 <select id="provider" onchange="renderModels()"></select></label><label>模型 <input id="model" list="modelSuggestions" placeholder="模型 ID"></label><datalist id="modelSuggestions"></datalist><label>温度 <input id="temperature" type="number" min="0" max="2" step="0.1" value="0.2"></label><label>每次运行最多调用 <input id="maxCalls" type="number" min="1" value="1200"></label><p><small>模型调用预算至少为学生人数 × 天数 × 每日时段数；同伴对话还会增加调用。API 密钥只从启动服务的环境变量读取。</small></p><button onclick="launch()">启动新运行</button><button onclick="launchBatch()">启动固定 3×3 对照</button><p><small>固定 3×3 对照使用预设人数和天数，不使用上方自定义参数。</small></p><p id="message"></p></div>
-<div class="box"><h2>已有运行</h2><button onclick="refresh()">刷新</button><button onclick="clearDisplayed()">清空显示</button><button onclick="restoreDisplayed()">恢复显示</button><small id="hiddenCount"></small><div id="jobs"></div><table><thead><tr><th>名称</th><th>模型</th><th>条件</th><th>学生</th><th>辅导员</th><th>天数</th><th>求助率</th><th>支持率</th><th>等待天数</th></tr></thead><tbody id="runs"></tbody></table><small>清空显示只隐藏浏览器中的现有记录，不删除实验文件。新运行完成后仍会显示。</small></div>
+<div class="box"><h2>已有运行</h2><button onclick="refresh()">刷新</button><button onclick="clearDisplayed()">清空显示</button><button onclick="restoreDisplayed()">恢复显示</button><small id="hiddenCount"></small><div id="jobs"></div><table><thead><tr><th>名称</th><th>模型</th><th>条件</th><th>学生</th><th>辅导员</th><th>天数</th><th>求助率</th><th>支持率</th><th>等待天数</th><th>操作</th></tr></thead><tbody id="runs"></tbody></table><small>“删除记录”和“清空显示”只隐藏浏览器中的记录，不删除实验文件；“恢复显示”可找回。</small></div>
 <div class="box"><h2>批处理结果</h2><div id="batches">暂无结果。</div></div>
 <div class="box"><h2>选中运行</h2><div id="detail">请选择一个运行。</div><canvas id="chart" width="900" height="260"></canvas></div>
 <div class="box"><h2>主体行动轨迹</h2><p>选择学生或辅导员查看其事件；辅导员轨迹包括值班和其承接的支持服务。每页 50 条。</p><label>主体 <select id="eventActor" onchange="loadEvents(0)"><option value="">全部主体</option></select></label><label>模拟日 <input id="eventDay" type="number" min="1" max="30" placeholder="全部"></label><label>行动 <select id="eventAction"><option value="">全部</option><option>attend</option><option>course_absence</option><option>rest</option><option>peer</option><option>request</option><option>accept_support</option><option>staff_shift</option><option>model_decision</option><option>outreach_information</option><option>staff_follow_up</option></select></label><button onclick="loadEvents(0)">筛选</button><p id="eventStatus">请选择一个运行。</p><table><thead><tr><th>日</th><th>时段</th><th>主体</th><th>行动</th><th>状态</th><th>原因或详情</th></tr></thead><tbody id="events"></tbody></table><button onclick="previousEvents()">上一页</button><button onclick="nextEvents()">下一页</button></div>
@@ -140,9 +140,15 @@ function renderRuns(){
     let tr=document.createElement('tr'),model=x.driver==='llm'?x.model_provider+' / '+x.model_id:'离线规则';
     let values=[x.name,model,x.condition,x.n_students,x.n_staff,x.complete_steps,pct(x.requested_rate),pct(x.supported_rate),x.completed_wait_mean_days==null?'—':x.completed_wait_mean_days.toFixed(2)];
     for(let v of values){let td=document.createElement('td');td.textContent=v;tr.append(td)}
+    let action=document.createElement('td'),remove=document.createElement('button');
+    remove.textContent='删除记录';remove.title='只从当前浏览器隐藏，不删除实验文件';
+    remove.onclick=e=>{e.stopPropagation();hideRun(x.name)};action.append(remove);tr.append(action);
     tr.style.cursor='pointer';tr.onclick=()=>show(x.name);body.append(tr)
   }
-  document.getElementById('jobs').textContent=data.jobs.filter(x=>!hiddenNames.has(x.name)).map(x=>x.name+'：'+x.status+(x.error?'（查看服务器状态文件）':'')).join('；');
+  let listedRuns=new Set(data.runs.map(x=>x.name));
+  document.getElementById('jobs').textContent=data.jobs.filter(x=>
+    !hiddenNames.has(x.name)&&!(x.status==='complete'&&listedRuns.has(x.name))
+  ).map(x=>x.name+'：'+x.status+(x.error?'（查看服务器状态文件）':'')).join('；');
   let b=document.getElementById('batches');b.replaceChildren();
   for(let run of data.batches.filter(x=>!hiddenNames.has(x.name))){
     let p=document.createElement('p');p.textContent=run.name+'：'+run.status;b.append(p);
@@ -161,12 +167,20 @@ function renderRuns(){
   document.getElementById('hiddenCount').textContent=hiddenNames.size?'已隐藏 '+hiddenNames.size+' 条记录':''
 }
 async function refresh(){try{latestData=await j('/api/runs');renderRuns()}catch(e){document.getElementById('message').textContent=e.message}}
+function resetSelected(){
+  selectedRun=null;eventOffset=0;eventTotal=0;
+  document.getElementById('detail').textContent='请选择一个运行。';
+  document.getElementById('events').replaceChildren();document.getElementById('eventStatus').textContent='请选择一个运行。';
+  let canvas=document.getElementById('chart');canvas.getContext('2d').clearRect(0,0,canvas.width,canvas.height)
+}
+function hideRun(name){
+  hiddenNames.add(name);localStorage.setItem('campus-sim-hidden-runs',JSON.stringify([...hiddenNames]));
+  if(selectedRun===name)resetSelected();renderRuns()
+}
 function clearDisplayed(){
   for(let group of [latestData.runs,latestData.jobs,latestData.batches])for(let item of group)hiddenNames.add(item.name);
   localStorage.setItem('campus-sim-hidden-runs',JSON.stringify([...hiddenNames]));
-  selectedRun=null;document.getElementById('detail').textContent='请选择一个运行。';
-  document.getElementById('events').replaceChildren();document.getElementById('eventStatus').textContent='请选择一个运行。';
-  document.getElementById('chart').getContext('2d').clearRect(0,0,900,260);renderRuns()
+  resetSelected();renderRuns()
 }
 function restoreDisplayed(){hiddenNames.clear();localStorage.removeItem('campus-sim-hidden-runs');renderRuns()}
 function actorOptions(summary){let select=document.getElementById('eventActor');select.replaceChildren();let all=document.createElement('option');all.value='';all.textContent='全部主体';select.append(all);for(let [prefix,count,label] of [['s',summary.n_students,'学生'],['c',summary.n_staff,'辅导员']]){let group=document.createElement('optgroup');group.label=label;for(let i=0;i<count;i++){let id=prefix+String(i).padStart(3,'0'),option=document.createElement('option');option.value=id;option.textContent=label+' '+id;group.append(option)}select.append(group)}}
