@@ -251,6 +251,7 @@ PAGE = """<!doctype html><html lang="zh"><meta charset="utf-8"><meta name="viewp
 <div class="box"><h2>独立批处理结果</h2><p><small>这里列出各批次政策 × 种子的整体汇总，不随下方“选中运行”切换；旧批次保留原来的实验组合。</small></p><div id="batches">暂无结果。</div></div>
 <div class="box"><h2>选中运行</h2><div id="detail">请选择一个运行。</div><div style="overflow-x:auto"><canvas id="chart" width="900" height="320" style="max-width:none"></canvas></div></div>
 <div class="box"><h2>主体行动轨迹</h2><p>每天按辅导员、学生的编号升序排列；每位主体每天占一行，行动按发生顺序连接。辅导员轨迹包含值班和其承接的服务。每页 50 行。</p><label>主体 <select id="eventActor" onchange="loadEvents(0)"><option value="">全部主体</option></select></label><label>模拟日 <input id="eventDay" type="number" min="1" max="30" placeholder="全部"></label><label>行动 <select id="eventAction"><option value="">全部</option><option>attend</option><option>course_absence</option><option>rest</option><option>peer</option><option>request</option><option>accept_support</option><option>staff_shift</option><option>model_decision</option><option>outreach_information</option><option>staff_follow_up</option></select></label><button onclick="loadEvents(0)">筛选</button><p id="eventStatus">请选择一个运行。</p><table><thead><tr><th>日</th><th>主体</th><th>行动顺序</th><th>状态与详情</th></tr></thead><tbody id="events"></tbody></table><button onclick="previousEvents()">上一页</button><button onclick="nextEvents()">下一页</button></div>
+<style>.metric-guide{margin:.8rem 0 1rem;padding:.8rem 1rem;background:#f5f7fb;border-radius:8px}.metric-guide ul{margin:.4rem 0 0;padding-left:1.4rem}.metric-guide li{margin:.3rem 0;line-height:1.5}</style>
 <script>
 const j=async u=>{const r=await fetch(u);if(!r.ok)throw Error(await r.text());return r.json()};
 const pct=x=>x==null?'—':(100*x).toFixed(1)+'%';
@@ -361,6 +362,16 @@ async function show(name){
       ['压力均值',x.summary.stress_distribution.mean.toFixed(3)]
     ]){let row=document.createElement('tr'),key=document.createElement('th'),valueCell=document.createElement('td');key.scope='row';key.style.width='140px';key.textContent=label;valueCell.textContent=value;valueCell.style.overflowWrap='anywhere';row.append(key,valueCell);summary.append(row)}
     d.append(summary);
+    let guide=document.createElement('div');guide.className='metric-guide';
+    let heading=document.createElement('strong');heading.textContent='指标含义';guide.append(heading);
+    let descriptions=document.createElement('ul');
+    for(let [label,meaning] of [
+      ['求助率','运行期间至少提出过一次求助的学生数 ÷ 全体学生数；反映模拟中的求助行为覆盖范围，不代表求助次数。'],
+      ['获得支持率','运行期间至少获得过一次辅导员支持的学生数 ÷ 全体学生数；反映模拟服务触达范围，不等于求助后的成功率。'],
+      ['持续低联结率','运行结束时，连续至少 7 天联结值低于 0.3 的学生数 ÷ 全体学生数；反映模拟中持续缺少联结的学生占比。'],
+      ['压力均值','运行结束时全体学生压力值的平均数，取值范围为 0–1；反映模型内的总体压力水平，不是临床测量结果。']
+    ]){let item=document.createElement('li'),title=document.createElement('strong');title.textContent=label+'：';item.append(title,document.createTextNode(meaning));descriptions.append(item)}
+    guide.append(descriptions);d.append(guide);
     if(x.daily_metrics_error){let error=document.createElement('p');error.textContent='每日指标读取失败：'+x.daily_metrics_error;d.append(error)}
     drawStressChart(x.days)
   }catch(e){selectedRun=null;d.textContent='无法打开运行 '+name+'：'+e.message}
