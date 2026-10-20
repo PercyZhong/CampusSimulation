@@ -369,16 +369,16 @@ function drawStressChart(metrics){
   let c=document.getElementById('chart'),ctx=c.getContext('2d');
   let days=metrics.filter(p=>Number.isFinite(p.day)).sort((a,b)=>a.day-b.day);
   let first=days.length?days[0].day:1,last=days.length?days[days.length-1].day:1;
-  c.width=Math.max(700,(last-first+1)*75+90);c.height=320;
+  c.width=Math.max(700,(last-first+1)*75+145);c.height=320;
   ctx.font='14px system-ui';ctx.fillStyle='#172337';
   ctx.fillText('逐日平均压力（模型变量）',55,25);
   if(!days.some(p=>Number.isFinite(p.mean_stress))){ctx.fillText('暂无每日压力数据',55,65);return}
-  let left=55,right=c.width-40,top=80,bottom=280;
+  let left=110,right=c.width-40,top=80,bottom=280;
   let X=day=>left+(day-first)*(right-left)/Math.max(1,last-first),Y=value=>bottom-value*(bottom-top);
   ctx.lineWidth=1;
   for(let value of [0,.25,.5,.75,1]){
     ctx.strokeStyle='#dce2eb';ctx.beginPath();ctx.moveTo(left,Y(value));ctx.lineTo(right,Y(value));ctx.stroke();
-    ctx.fillStyle='#526279';ctx.textAlign='right';ctx.fillText(String(value),left-10,Y(value)+5)
+    ctx.fillStyle='#526279';ctx.textAlign='right';ctx.fillText(String(value),left-28,Y(value)+5)
   }
   ctx.textAlign='center';
   for(let day=first;day<=last;day++){
