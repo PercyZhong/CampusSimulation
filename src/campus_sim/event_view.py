@@ -6,7 +6,7 @@ from pathlib import Path
 MAX_PAGE_SIZE = 100
 
 
-def read_events(run_dir, *, day=None, action=None, actor=None, offset=0, limit=50):
+def _validate_filters(day, action, actor, offset, limit):
     if type(offset) is not int or offset < 0:
         raise ValueError("offset must be a nonnegative integer")
     if type(limit) is not int or not 1 <= limit <= MAX_PAGE_SIZE:
@@ -22,6 +22,8 @@ def read_events(run_dir, *, day=None, action=None, actor=None, offset=0, limit=5
                               not (actor[0] in {"s", "c"} and actor[1:].isdigit())):
         raise ValueError("invalid actor")
 
+def read_events(run_dir, *, day=None, action=None, actor=None, offset=0, limit=50):
+    _validate_filters(day, action, actor, offset, limit)
     path = Path(run_dir) / "events.jsonl"
     total = 0
     page = []
@@ -40,3 +42,43 @@ def read_events(run_dir, *, day=None, action=None, actor=None, offset=0, limit=5
                 page.append(event)
             total += 1
     return {"total": total, "offset": offset, "limit": limit, "events": page}
+
+
+def read_timeline(run_dir, *, day=None, action=None, actor=None, offset=0, limit=50):
+    """Group actions by day and subject before paginating whole daily paths."""
+    _validate_filters(day, action, actor, offset, limit)
+    grouped = {}
+    path = Path(run_dir) / "events.jsonl"
+    with path.open(encoding="utf-8") as stream:
+        for position, line in enumerate(stream):
+            event = json.loads(line)
+            if event["action"] == "student_state":
+                continue
+            if day is not None and event["day"] != day:
+                continue
+            if action is not None and event["action"] != action:
+                continue
+            subjects = set()
+            source = event["actor"]
+            if (isinstance(source, str) and len(source) > 1
+                    and source[0] in {"c", "s"} and source[1:].isdigit()):
+                subjects.add(source)
+            detail = event.get("detail") or {}
+            staff = detail.get("staff_id") if isinstance(detail, dict) else None
+            if (isinstance(staff, str) and len(staff) > 1
+                    and staff[0] == "c" and staff[1:].isdigit()):
+                subjects.add(staff)
+            for subject in subjects:
+                if actor is None or actor == subject:
+                    grouped.setdefault((event["day"], subject), []).append(
+                        (event.get("ordinal", position), position, event))
+
+    def order(key):
+        day_number, subject = key
+        return day_number, 0 if subject[0] == "c" else 1, int(subject[1:])
+
+    keys = sorted(grouped, key=order)
+    rows = [{"day": key[0], "actor": key[1],
+             "events": [event for _, _, event in sorted(grouped[key])]}
+            for key in keys[offset:offset + limit]]
+    return {"total": len(keys), "offset": offset, "limit": limit, "rows": rows}
