@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -34,7 +34,7 @@ def test_web_config_rejects_out_of_bounds_settings(change):
 
 
 def test_run_names_use_shanghai_minute_and_reserve_collisions(tmp_path):
-    when = datetime(2026, 10, 20, 3, 3, tzinfo=timezone.utc)
+    when = datetime(2026, 10, 20, 3, 3, tzinfo=UTC)
     assert run_name("baseline", 11, when) == "baseline-seed11-202610201103"
     data = {"condition": "baseline", "seed": 11}
     first, first_path = save_run_config(tmp_path, data, when)
