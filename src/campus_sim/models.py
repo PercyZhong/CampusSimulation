@@ -155,13 +155,13 @@ def _dialogue_from_provider(text, actor, partner):
 
 
 class ModelClient:
-    def __init__(self, provider, model, max_calls, temperature=0.2):
+    def __init__(self, provider, model, max_calls, temperature=0.2, api_key=None):
         validate(provider, model, max_calls)
         if type(temperature) not in (int, float) or not 0 <= temperature <= 2:
             raise ValueError("model_temperature must be in [0,2]")
         self.provider, self.model, self.max_calls = provider, model, max_calls
         self.temperature = temperature
-        self.key = require_key(provider)
+        self.key = api_key or require_key(provider)
         self.calls = 0
         self.lock = threading.Lock()
 

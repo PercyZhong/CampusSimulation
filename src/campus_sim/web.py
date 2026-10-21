@@ -1,6 +1,7 @@
 """Loopback-only workbench for synthetic Society0 experiments."""
 
 import csv
+import hashlib
 import json
 import os
 import re
@@ -14,6 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
+from .analysis_agent import batch_evidence, generate_report, run_evidence, save_report
 from .domain import Config
 from .event_view import read_events, read_timeline
 from .models import PROVIDERS, choices, require_key, validate
@@ -248,10 +250,11 @@ PAGE = """<!doctype html><html lang="zh"><meta charset="utf-8"><meta name="viewp
 <div class="box"><h2>构建校园实验</h2><label>政策条件 <select id="condition"><option value="baseline">baseline（基线）</option><option value="outreach">outreach（全体外展）</option><option value="easier_access">easier_access（降低求助门槛）</option><option value="targeted_outreach">targeted_outreach（定向外展）</option></select></label><div class="policy-guide"><strong>政策说明</strong><ul><li><code>baseline</code>：保持基线求助门槛与服务规则，不主动推送支持服务信息。</li><li><code>outreach</code>：在设置的外展投递日向全体学生发送支持服务信息。</li><li><code>easier_access</code>：降低求助门槛，让学生更容易提出求助。</li><li><code>targeted_outreach</code>：在设置的外展投递日向初始低联结组发送支持服务信息。</li></ul></div><label>随机种子 <input id="seed" type="number" min="0" max="999999" value="11"></label><label>学生人数 <input id="nStudents" type="number" min="2" max="100" value="40"></label><label>辅导员人数 <input id="nStaff" type="number" min="1" max="10" value="2"></label><label>运行天数 <input id="days" type="number" min="1" max="30" value="10"></label><label>每日决策时段 <select id="periods"><option value="1">一次</option><option value="3">上午、下午、晚上</option></select></label><label>每日服务名额 <input id="capacity" type="number" min="1" max="30" value="3"></label><label>服务开放间隔（天） <input id="openEvery" type="number" min="1" max="7" value="1"></label><label>基线求助门槛 <input id="barrier" type="number" min="0" max="1" step="0.01" value="0.22"></label><label>外展投递日 <input id="outreachDay" type="number" min="1" max="30" value="5"></label><p><small>上限：学生 100 人、辅导员 10 人、30 天。每日服务名额不能超过辅导员人数的 3 倍。外展投递日仅影响外展条件。</small></p><label>决策方式 <select id="driver" onchange="renderModels()"><option value="rule">离线规则</option><option value="llm">真实 LLM API</option></select></label><label>提供商 <select id="provider" onchange="renderModels()"></select></label><label>模型 <input id="model" list="modelSuggestions" placeholder="模型 ID"></label><datalist id="modelSuggestions"></datalist><label>温度 <input id="temperature" type="number" min="0" max="2" step="0.1" value="0.2"></label><label>每次运行最多调用 <input id="maxCalls" type="number" min="1" value="1200"></label><label>在线 API 密钥 <input id="apiKey" type="password" autocomplete="off" spellcheck="false" placeholder="输入后以 •••• 隐藏"></label><p><small>可在线输入本次运行的密钥，也可使用启动服务时设置的环境变量。在线密钥仅传给本次运行进程，提交后清空输入框。</small></p><button onclick="launch()">启动新运行</button><p id="message"></p></div>
 <div class="box"><h2>自定义对照实验</h2><p>选择政策并输入随机种子；对照中的每次运行共用上方的学生、辅导员、天数、服务和决策参数。</p><div id="batchPolicies"><label><input type="checkbox" value="baseline" checked>baseline（基线）</label><label><input type="checkbox" value="outreach" checked>outreach（全体外展）</label><label><input type="checkbox" value="easier_access" checked>easier_access（降低求助门槛）</label><label><input type="checkbox" value="targeted_outreach" checked>targeted_outreach（定向外展）</label></div><label>随机种子列表 <input id="batchSeeds" type="text" value="11,22,33" placeholder="例如 11,22,33"></label><p><small>可选 1–4 种政策、1–10 个不重复种子，最多 40 次运行。单次运行的政策和种子输入框不影响此对照。</small></p><button onclick="launchBatch()">启动自定义对照</button><p id="batchMessage"></p></div>
 <div class="box"><h2>已有运行</h2><button onclick="refresh()">刷新</button><button onclick="clearDisplayed()">清空显示</button><small id="hiddenCount"></small><div id="jobs"></div><table><thead><tr><th>名称</th><th>模型</th><th>条件</th><th>学生</th><th>辅导员</th><th>天数</th><th>求助率</th><th>支持率</th><th>等待天数</th><th>操作</th></tr></thead><tbody id="runs"></tbody></table><small>“删除记录”和“清空显示”会永久移除网页显示，无法在页面恢复；实验文件和日志仍保留在本地。</small></div>
-<div class="box"><h2>独立批处理结果</h2><p><small>这里列出各批次政策 × 种子的整体汇总，不随下方“选中运行”切换；旧批次保留原来的实验组合。</small></p><div id="batches">暂无结果。</div></div>
-<div class="box"><h2>选中运行</h2><div id="detail">请选择一个运行。</div><div style="overflow-x:auto"><canvas id="chart" width="900" height="320" style="max-width:none"></canvas></div></div>
+<div class="box"><h2>实验分析 Agent 设置</h2><p><small>选择用于解释结果的模型。分析模型独立于实验决策模型；密钥可在此临时输入，也可使用服务启动时的环境变量。</small></p><label>分析提供商 <select id="analysisProvider" onchange="renderAnalysisModels()"></select></label><label>分析模型 <input id="analysisModel" list="analysisSuggestions" placeholder="模型 ID"></label><datalist id="analysisSuggestions"></datalist><label>分析 API 密钥 <input id="analysisKey" type="password" autocomplete="off" spellcheck="false" placeholder="输入后以 •••• 隐藏"></label><p><small>单次分析会调用模型 API 并可能产生费用。密钥只用于本次分析，不写入报告。获取密钥和计费步骤见 README 的“实验分析 Agent”部分。</small></p></div>
+<div class="box"><h2>独立批处理结果</h2><p><small>这里列出各批次政策 × 种子的整体汇总，不随下方“选中运行”切换；旧批次保留原来的实验组合。</small></p><div id="batches">暂无结果。</div><div id="batchAnalysisReport"></div></div>
+<div class="box"><h2>选中运行</h2><div id="detail">请选择一个运行。</div><div id="runAnalysisReport"></div><div style="overflow-x:auto"><canvas id="chart" width="900" height="320" style="max-width:none"></canvas></div></div>
 <div class="box"><h2>主体行动轨迹</h2><p>每天按辅导员、学生的编号升序排列；每位主体每天占一行，行动按发生顺序连接。辅导员轨迹包含值班和其承接的服务。每页 50 行。</p><label>主体 <select id="eventActor" onchange="loadEvents(0)"><option value="">全部主体</option></select></label><label>模拟日 <input id="eventDay" type="number" min="1" max="30" placeholder="全部"></label><label>行动 <select id="eventAction"><option value="">全部</option><option>attend</option><option>course_absence</option><option>rest</option><option>peer</option><option>request</option><option>accept_support</option><option>staff_shift</option><option>model_decision</option><option>outreach_information</option><option>staff_follow_up</option></select></label><button onclick="loadEvents(0)">筛选</button><p id="eventStatus">请选择一个运行。</p><table><thead><tr><th>日</th><th>主体</th><th>行动顺序</th><th>状态与详情</th></tr></thead><tbody id="events"></tbody></table><button onclick="previousEvents()">上一页</button><button onclick="nextEvents()">下一页</button></div>
-<style>.metric-guide{margin:.8rem 0 1rem;padding:.8rem 1rem;background:#f5f7fb;border-radius:8px}.metric-guide ul{margin:.4rem 0 0;padding-left:1.4rem}.metric-guide li{margin:.3rem 0;line-height:1.5}</style>
+<style>.metric-guide{margin:.8rem 0 1rem;padding:.8rem 1rem;background:#f5f7fb;border-radius:8px}.metric-guide ul{margin:.4rem 0 0;padding-left:1.4rem}.metric-guide li{margin:.3rem 0;line-height:1.5}.analysis-item{padding:.8rem;margin:.6rem 0;border-left:3px solid #1756a9;background:#f5f7fb}.analysis-item p{margin:.4rem 0}.analysis-item small{display:inline-block;overflow-wrap:anywhere}</style>
 <script>
 const j=async u=>{const r=await fetch(u);if(!r.ok)throw Error(await r.text());return r.json()};
 const pct=x=>x==null?'—':(100*x).toFixed(1)+'%';
@@ -284,7 +287,8 @@ try{hiddenNames=new Set(JSON.parse(localStorage.getItem('campus-sim-hidden-runs'
 let hiddenSynced=false;
 async function persistHidden(names){let result;for(let start=0;start<names.length;start+=100){let response=await fetch('/api/hidden-runs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({names:names.slice(start,start+100)})});result=await response.json();if(!response.ok)throw Error(result.error)}return result}
 let providerInfo={};
-async function initModels(){providerInfo=await j('/api/models');let p=document.getElementById('provider');for(let [name,info] of Object.entries(providerInfo)){let o=document.createElement('option');o.value=name;o.textContent=name+(info.configured?' · 环境密钥已配置':' · 可在线输入密钥');p.append(o)}renderModels()}
+async function initModels(){providerInfo=await j('/api/models');for(let id of ['provider','analysisProvider']){let p=document.getElementById(id);for(let [name,info] of Object.entries(providerInfo)){let o=document.createElement('option');o.value=name;o.textContent=name+(info.configured?' · 环境密钥已配置':' · 可在线输入密钥');p.append(o)}}document.getElementById('analysisProvider').value='qwen';renderModels();renderAnalysisModels()}
+function renderAnalysisModels(){let provider=document.getElementById('analysisProvider').value,info=providerInfo[provider],list=document.getElementById('analysisSuggestions');list.replaceChildren();if(info){for(let name of info.models)list.append(new Option('',name));document.getElementById('analysisModel').value=info.models[0]}document.getElementById('analysisKey').value=''}
 function renderModels(){let active=document.getElementById('driver').value==='llm';for(let id of ['provider','model','temperature','maxCalls','apiKey'])document.getElementById(id).disabled=!active;let info=providerInfo[document.getElementById('provider').value];let list=document.getElementById('modelSuggestions');if(!active||(list.dataset.provider&&list.dataset.provider!==document.getElementById('provider').value))document.getElementById('apiKey').value='';list.replaceChildren();if(info){for(let name of info.models){let o=document.createElement('option');o.value=name;list.append(o)}if(!list.dataset.provider||list.dataset.provider!==document.getElementById('provider').value)document.getElementById('model').value=info.models[0];list.dataset.provider=document.getElementById('provider').value}}
 function modelOptions(){if(document.getElementById('driver').value!=='llm')return {};let key=document.getElementById('apiKey').value.trim();return {provider:document.getElementById('provider').value,model:document.getElementById('model').value,temperature:Number(document.getElementById('temperature').value),max_model_calls:Number(document.getElementById('maxCalls').value),...(key?{api_key:key}:{})}}
 function sharedOptions(){let number=id=>Number(document.getElementById(id).value);return {n_students:number('nStudents'),n_staff:number('nStaff'),days:number('days'),periods_per_day:number('periods'),capacity:number('capacity'),open_every:number('openEvery'),access_barrier:number('barrier'),outreach_day:number('outreachDay'),...modelOptions()}}
@@ -293,6 +297,18 @@ function updateBatchCount(){let policies=document.querySelectorAll('#batchPolici
 for(let box of document.querySelectorAll('#batchPolicies input'))box.addEventListener('change',updateBatchCount);
 document.getElementById('batchSeeds').addEventListener('input',updateBatchCount);updateBatchCount();
 function appendProgress(parent,item){let value=item.progress||{percent:0,completed:0,total:0},wrap=document.createElement('div'),bar=document.createElement('progress'),label=document.createElement('small');wrap.className='job-progress';bar.max=100;bar.value=value.percent;let detail=value.total?(item.seeds?` · 已完成 ${value.finished_runs}/${value.run_count} 次运行，${value.completed}/${value.total} 模拟天`:` · 已完成 ${value.completed}/${value.total} 模拟天`):' · 等待进度数据';if(item.status==='running'&&value.total&&value.completed===value.total)detail+=' · 结果整理中';label.textContent=value.percent+'%'+detail;wrap.append(bar,label);parent.append(wrap)}
+let analysisWatch={run:null,batch:null};
+function analysisTarget(kind){return document.getElementById(kind==='run'?'runAnalysisReport':'batchAnalysisReport')}
+function renderAnalysis(kind,data){let host=analysisTarget(kind);host.replaceChildren();if(data.status==='running'){host.textContent='分析 Agent 正在读取证据并生成报告…';return}if(data.status==='failed'){host.textContent='分析失败：'+data.error;return}
+  let report=data.result,title=document.createElement('h3');title.textContent='分析报告 · '+report.scope.name;host.append(title);
+  let info=document.createElement('small');info.textContent='模型：'+report.analysis_model.provider+' / '+report.analysis_model.model+' · 提示词：'+report.prompt_version+' · 文件：'+data.report;host.append(info);
+  let byId=new Map(report.evidence.map(item=>[item.id,item]));
+  for(let [label,entries] of [['主要发现',report.findings],['校园启示与待验证建议',report.recommendations]]){let heading=document.createElement('h4');heading.textContent=label;host.append(heading);for(let entry of entries){let block=document.createElement('div');block.className='analysis-item';let name=document.createElement('strong');name.textContent=(entry.title||entry.action||'分析')+(entry.status==='hypothesis'?'（假设）':'');block.append(name);for(let key of (entry.title?['interpretation']:['rationale','verification'])){let p=document.createElement('p');p.textContent=entry[key];block.append(p)}for(let id of entry.evidence_ids){let item=byId.get(id);if(!item)continue;let p=document.createElement('small');p.textContent=id+' '+item.label+'：'+JSON.stringify(item.value)+'（'+item.source+'）';block.append(p,document.createElement('br'))}if(entry.review_notes.length){let p=document.createElement('small');p.textContent='复核：'+entry.review_notes.join('；');block.append(p)}host.append(block)}}
+  let limits=document.createElement('h4');limits.textContent='局限';host.append(limits);for(let value of report.limitations){let p=document.createElement('p');p.textContent=value;host.append(p)}let audit=document.createElement('small');audit.textContent=report.audit_note;host.append(audit)
+}
+async function pollAnalysis(kind,name){try{let data=await j('/api/analysis/'+kind+'/'+name);if(kind==='run'&&selectedRun!==name)return;renderAnalysis(kind,data);if(data.status==='running'){analysisWatch[kind]=setTimeout(()=>pollAnalysis(kind,name),2500)}}catch(e){analysisTarget(kind).textContent=e.message}}
+async function loadExistingAnalysis(kind,name){try{let response=await fetch('/api/analysis/'+kind+'/'+name);if(response.ok)pollAnalysis(kind,name)}catch{}}
+async function launchAnalysis(kind,name){let host=analysisTarget(kind),data={kind,name,provider:document.getElementById('analysisProvider').value,model:document.getElementById('analysisModel').value,api_key:document.getElementById('analysisKey').value.trim()};try{let response=await fetch('/api/analysis',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}),result=await response.json();if(!response.ok)throw Error(result.error);document.getElementById('analysisKey').value='';if(analysisWatch[kind])clearTimeout(analysisWatch[kind]);host.textContent='分析已启动…';pollAnalysis(kind,name)}catch(e){host.textContent='无法启动分析：'+e.message}}
 function renderRuns(){
   let data=latestData,body=document.getElementById('runs');body.replaceChildren();
   for(let x of data.runs.filter(x=>!hiddenNames.has(x.name))){
@@ -314,6 +330,7 @@ function renderRuns(){
     let p=document.createElement('p'),conditions=run.by_condition?Object.keys(run.by_condition):(run.conditions||[]);
     let seeds=run.by_condition?run.by_condition[conditions[0]]?.requested_rate?.n_seeds:run.seeds?.length;
     p.textContent=run.name+'：'+run.status+(seeds?'（'+conditions.length+' 政策 × '+seeds+' 种子）':'');
+    if(run.status==='complete'&&run.by_condition){let analyze=document.createElement('button');analyze.textContent='分析政策对照';analyze.onclick=()=>launchAnalysis('batch',run.name);p.append(analyze);let previous=document.createElement('button');previous.textContent='查看最近分析';previous.onclick=()=>loadExistingAnalysis('batch',run.name);p.append(previous)}
     let removeBatch=document.createElement('button');removeBatch.textContent='删除记录';removeBatch.onclick=()=>hideRun(run.name);p.append(removeBatch);b.append(p);
     if(run.status==='running'||run.status==='failed')appendProgress(b,run);
     if(run.by_condition){
@@ -334,6 +351,8 @@ function renderRuns(){
 async function refresh(){try{if(!hiddenSynced&&hiddenNames.size){await persistHidden([...hiddenNames]);localStorage.removeItem('campus-sim-hidden-runs');hiddenNames.clear()}hiddenSynced=true;latestData=await j('/api/runs');if(selectedRun&&!latestData.runs.some(x=>x.name===selectedRun))resetSelected();renderRuns()}catch(e){document.getElementById('message').textContent=e.message}}
 function resetSelected(){
   selectedRun=null;eventOffset=0;eventTotal=0;
+  if(analysisWatch.run)clearTimeout(analysisWatch.run);
+  document.getElementById('runAnalysisReport').replaceChildren();
   document.getElementById('detail').textContent='请选择一个运行。';
   document.getElementById('events').replaceChildren();document.getElementById('eventStatus').textContent='请选择一个运行。';
   let canvas=document.getElementById('chart');canvas.getContext('2d').clearRect(0,0,canvas.width,canvas.height)
@@ -362,6 +381,9 @@ async function show(name){
       ['压力均值',x.summary.stress_distribution.mean.toFixed(3)]
     ]){let row=document.createElement('tr'),key=document.createElement('th'),valueCell=document.createElement('td');key.scope='row';key.style.width='140px';key.textContent=label;valueCell.textContent=value;valueCell.style.overflowWrap='anywhere';row.append(key,valueCell);summary.append(row)}
     d.append(summary);
+    document.getElementById('runAnalysisReport').replaceChildren();
+    let analyze=document.createElement('button');analyze.textContent='生成分析报告';analyze.onclick=()=>launchAnalysis('run',name);d.append(analyze);
+    loadExistingAnalysis('run',name);
     let guide=document.createElement('div');guide.className='metric-guide';
     let heading=document.createElement('strong');heading.textContent='指标含义';guide.append(heading);
     let descriptions=document.createElement('ul');
@@ -455,6 +477,49 @@ def create_handler(root):
     root = Path(root).resolve()
     project = Path(__file__).resolve().parents[2]
     hidden_lock = threading.Lock()
+    analysis_lock = threading.Lock()
+    analysis_io_lock = threading.Lock()
+    analysis_instance = uuid.uuid4().hex
+
+    def analysis_status_path(kind, name):
+        digest = hashlib.sha256(f"{kind}:{name}".encode()).hexdigest()
+        return root / ".analysis-status" / f"{digest}.json"
+
+    def write_analysis_status(path, value):
+        with analysis_io_lock:
+            path.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
+
+    def start_analysis(kind, name, provider, model, api_key):
+        status_path = analysis_status_path(kind, name)
+        with analysis_lock:
+            if status_path.is_file():
+                previous = json.loads(status_path.read_text(encoding="utf-8"))
+                if (previous.get("status") == "running"
+                        and previous.get("instance") == analysis_instance):
+                    raise ValueError("analysis is already running")
+            status_path.parent.mkdir(exist_ok=True)
+            write_analysis_status(status_path, {"status": "running", "name": name,
+                "kind": kind, "instance": analysis_instance, "started_at": time.time()})
+
+        def work():
+            try:
+                target = root.joinpath(*name.split("/"))
+                if kind == "run":
+                    packet = run_evidence(target)
+                else:
+                    packet = batch_evidence(target, root / "configs" / f"{name}.json")
+                report = generate_report(packet, provider, model, api_key=api_key)
+                saved = save_report(target, report)
+                result = {"status": "complete", "name": name, "kind": kind,
+                          "report": str(saved.relative_to(root).as_posix()),
+                          "finished_at": time.time()}
+            except (OSError, ValueError, KeyError, TypeError, RuntimeError) as error:
+                message = str(error).replace(api_key, "[REDACTED]") if api_key else str(error)
+                result = {"status": "failed", "name": name, "kind": kind,
+                          "error": message[:500], "finished_at": time.time()}
+            write_analysis_status(status_path, result)
+
+        threading.Thread(target=work, daemon=True).start()
 
     def spawn(command, name, started_at=None, key_env=None, api_key=None, metadata=None):
         started_at = started_at if started_at is not None else time.time()
@@ -504,6 +569,21 @@ def create_handler(root):
                 return self.send_data(200, PAGE, "text/html; charset=utf-8")
             if path == "/api/models":
                 return self.send_data(200, choices())
+            analysis_match = re.fullmatch(r"/api/analysis/(run|batch)/([a-zA-Z0-9_./-]+)", path)
+            if analysis_match:
+                kind, name = analysis_match.groups()
+                if not valid_record_name(name) or (kind == "batch" and "/" in name):
+                    return self.send_data(404, {"error": "analysis not found"})
+                status_path = analysis_status_path(kind, name)
+                try:
+                    with analysis_io_lock:
+                        status = json.loads(status_path.read_text(encoding="utf-8"))
+                    if status["status"] == "complete":
+                        status["result"] = json.loads((root / status["report"]).read_text(
+                            encoding="utf-8"))
+                    return self.send_data(200, status)
+                except (OSError, ValueError, KeyError):
+                    return self.send_data(404, {"error": "analysis not found"})
             if path == "/api/runs":
                 hidden = read_hidden_names(root)
                 def visible(name):
@@ -595,6 +675,30 @@ def create_handler(root):
                     with hidden_lock:
                         hidden = hide_record_names(root, data.get("names"))
                     return self.send_data(200, {"hidden_count": len(hidden)})
+                if self.path == "/api/analysis":
+                    kind, name = data.get("kind"), data.get("name")
+                    if kind not in {"run", "batch"} or not valid_record_name(name):
+                        raise ValueError("invalid analysis target")
+                    if kind == "batch" and ("/" in name or not name.startswith("batch-")):
+                        raise ValueError("invalid batch target")
+                    provider, model = data.get("provider"), data.get("model")
+                    validate(provider, model, 1)
+                    api_key = data.get("api_key")
+                    if api_key is not None and (not isinstance(api_key, str)
+                                                or not 1 <= len(api_key.strip()) <= 512
+                                                or not api_key.isprintable()):
+                        raise ValueError("invalid API key")
+                    if not api_key:
+                        require_key(provider)
+                    target = root.joinpath(*name.split("/"))
+                    if kind == "run" and not (target / "summary.json").is_file():
+                        raise ValueError("run is not complete")
+                    if kind == "batch" and not (target / "comparison.json").is_file():
+                        raise ValueError("batch is not complete")
+                    start_analysis(kind, name, provider, model,
+                                   api_key.strip() if api_key else None)
+                    return self.send_data(202, {"kind": kind, "name": name,
+                                                "status": "running"})
                 provider = data.get("provider")
                 api_key = data.get("api_key")
                 if api_key is not None and (not isinstance(api_key, str)
