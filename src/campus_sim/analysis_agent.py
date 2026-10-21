@@ -241,7 +241,7 @@ def _checked_sections(draft, evidence_ids):
         checked[section] = []
         for entry in entries:
             if not isinstance(entry, dict):
-                raise ValueError(f"invalid {section} entry")
+                raise TypeError(f"invalid {section} entry")
             prose = {field: entry.get(field, "") for field in fields}
             if any(not isinstance(value, str) or len(value) > 800 for value in prose.values()):
                 raise ValueError("invalid analysis prose")
@@ -280,7 +280,7 @@ def generate_report(packet, provider, model, *, api_key=None):
     content, usage = client._request(system, json.dumps(packet, ensure_ascii=False), 3500)
     draft = _json_object_prefix(content)
     if not isinstance(draft, dict):
-        raise ValueError("model report must be a JSON object")
+        raise TypeError("model report must be a JSON object")
     checked = _checked_sections(draft, {item["id"] for item in packet["evidence"]})
     checked["limitations"].append("压力和心情是未校准的模型内部变量；建议仅用于下一轮模拟验证。")
     return {"schema_version": 1, "prompt_version": PROMPT_VERSION,
