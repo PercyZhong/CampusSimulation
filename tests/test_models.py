@@ -115,6 +115,22 @@ def test_handshake_timeout_retries_once_within_call_limit(monkeypatch):
     assert action == "rest" and client.calls == len(attempts) == 2
 
 
+def test_qwen_analysis_can_disable_thinking_without_changing_other_requests(monkeypatch):
+    payloads = []
+
+    def fake_post(url, headers, payload):
+        payloads.append(payload)
+        return {"choices": [{"message": {"content": "{}"}}]}
+
+    monkeypatch.setattr("campus_sim.models._post", fake_post)
+    for setting in (False, None):
+        client = ModelClient("qwen", "qwen3.5-plus-2026-02-15", 1,
+                             api_key="local-test-key", enable_thinking=setting)
+        client._request("system", "user", 3500)
+    assert payloads[0]["enable_thinking"] is False
+    assert "enable_thinking" not in payloads[1]
+
+
 def test_peer_dialogue_uses_shared_call_limit_and_validates_turns(monkeypatch):
     monkeypatch.setenv("DASHSCOPE_API_KEY", "local-test-key")
     requests = []

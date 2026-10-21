@@ -8,7 +8,8 @@ import urllib.request
 
 PROVIDERS = {
     "deepseek": {"env": "DEEPSEEK_API_KEY", "models": ("deepseek-chat", "deepseek-reasoner")},
-    "qwen": {"env": "DASHSCOPE_API_KEY", "models": ("qwen-plus", "qwen-turbo", "qwen-max")},
+    "qwen": {"env": "DASHSCOPE_API_KEY", "models": ("qwen-plus", "qwen-turbo", "qwen-max",
+                                                    "qwen3.5-plus-2026-02-15")},
     "openai": {"env": "OPENAI_API_KEY", "models": ("gpt-4.1", "gpt-4.1-mini")},
     "gemini": {"env": "GEMINI_API_KEY", "models": ("gemini-2.5-flash", "gemini-2.5-pro")},
     "anthropic": {"env": "ANTHROPIC_API_KEY", "models": ("claude-sonnet-4-5", "claude-haiku-4-5")},
@@ -155,12 +156,16 @@ def _dialogue_from_provider(text, actor, partner):
 
 
 class ModelClient:
-    def __init__(self, provider, model, max_calls, temperature=0.2, api_key=None):
+    def __init__(self, provider, model, max_calls, temperature=0.2, api_key=None,
+                 enable_thinking=None):
         validate(provider, model, max_calls)
         if type(temperature) not in (int, float) or not 0 <= temperature <= 2:
             raise ValueError("model_temperature must be in [0,2]")
+        if enable_thinking is not None and type(enable_thinking) is not bool:
+            raise TypeError("enable_thinking must be a boolean")
         self.provider, self.model, self.max_calls = provider, model, max_calls
         self.temperature = temperature
+        self.enable_thinking = enable_thinking
         self.key = api_key or require_key(provider)
         self.calls = 0
         self.lock = threading.Lock()
@@ -176,12 +181,15 @@ class ModelClient:
         provider = self.provider
         def send():
             if provider in OPENAI_COMPATIBLE:
+                payload = {"model": self.model, "temperature": self.temperature,
+                           "max_tokens": max_tokens,
+                           "messages": [{"role": "system", "content": system},
+                                        {"role": "user", "content": user}]}
+                if provider == "qwen" and self.enable_thinking is not None:
+                    payload["enable_thinking"] = self.enable_thinking
                 return _post(OPENAI_COMPATIBLE[provider],
                              {"Authorization": f"Bearer {self.key}"},
-                             {"model": self.model, "temperature": self.temperature,
-                              "max_tokens": max_tokens,
-                              "messages": [{"role": "system", "content": system},
-                                           {"role": "user", "content": user}]})
+                             payload)
             if provider == "anthropic":
                 return _post("https://api.anthropic.com/v1/messages",
                              {"x-api-key": self.key, "anthropic-version": "2023-06-01"},

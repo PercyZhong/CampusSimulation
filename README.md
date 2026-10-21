@@ -102,6 +102,8 @@ LLM 驱动可使用启动 Web 服务前设置的环境变量，也可在页面�
 
 分析 Agent 在实验结束后另行调用模型；规则驱动实验也可以使用它。建议先用少量已完成运行试用，确认模型返回的报告格式和费用。API 通常按 Token 用量计费，账户购买的是调用额度，并非需要下载的模型文件。
 
+分析模型默认选用 `qwen3.5-plus-2026-02-15`。这是固定快照，便于对比不同时间生成的报告；分析请求关闭该模型的思考模式，以减少额外 Token 消耗并给 JSON 报告保留输出空间。它只影响结果分析，不改变实验运行时的决策模型。请确认百炼控制台中该模型的免费额度适用于所用地域及业务空间。免费额度列表里的“未开启”指“免费额度用完即停”开关尚未开启，并非模型不可调用；如需确保免费额度耗尽后不继续计费，可在控制台为该模型开启此开关。
+
 1. **选择提供商并取得密钥。** 推荐从已有接口的 Qwen 开始：注册阿里云账号，在[百炼控制台](https://bailian.console.aliyun.com/)开通服务，在[API Key 页面](https://help.aliyun.com/zh/model-studio/get-api-key/)创建密钥。百炼默认按量计费；免费额度或充值要求、模型价格以[官方计费页面](https://help.aliyun.com/zh/model-studio/model-pricing)和控制台为准。也可使用 [DeepSeek 开放平台](https://platform.deepseek.com/)创建 API Key，按其[余额与充值说明](https://api-docs.deepseek.com/zh-cn/quick_start/error_codes/)操作。DeepSeek 模型 ID 可能更新，使用其[当前官方文档](https://api-docs.deepseek.com/zh-cn/)列出的 ID，并在页面“分析模型”框中手动填写。
 2. **接入 Linux 工作台。** 在浏览器的“实验分析 Agent 设置”选择提供商和模型，将密钥输入独立的密码框。密钥只用于此次报告请求，提交后清空，不保存在实验配置、状态文件或报告中。也可在启动 Web 服务的同一终端执行 `read -r -s -p 'Qwen API Key: ' DASHSCOPE_API_KEY; echo; export DASHSCOPE_API_KEY`，DeepSeek 则使用 `DEEPSEEK_API_KEY`；设置后再启动 Web 服务。不要把密钥写进仓库或 shell 历史。
 3. **生成报告。** 在已完成的“选中运行”点击“生成分析报告”；或在已完成的批次旁点击“分析政策对照”。页面显示分析状态、主要发现、证据编号、局限和待验证建议。报告以 JSON 独立保存到运行或批次目录的 `analysis-reports/`，包含分析模型、提示词版本、调用用量与完整证据；“查看最近分析”可重新打开批次报告。重复生成会产生新的文件及新的 API 用量。

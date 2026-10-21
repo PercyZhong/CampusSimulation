@@ -269,7 +269,9 @@ def _checked_sections(draft, evidence_ids):
 
 def generate_report(packet, provider, model, *, api_key=None):
     """Request one report, allowing a transport retry, and check evidence references."""
-    client = ModelClient(provider, model, 2, temperature=0.1, api_key=api_key)
+    non_thinking = provider == "qwen" and model == "qwen3.5-plus-2026-02-15"
+    client = ModelClient(provider, model, 2, temperature=0.1, api_key=api_key,
+                         enable_thinking=False if non_thinking else None)
     system = ("你是合成校园实验的分析员。只使用给定证据，返回一个 JSON 对象，不要 Markdown。"
               "字段：findings=[{title,interpretation,evidence_ids}]，"
               "recommendations=[{action,rationale,verification,evidence_ids}]，limitations=[字符串]。"
@@ -286,6 +288,7 @@ def generate_report(packet, provider, model, *, api_key=None):
     return {"schema_version": 1, "prompt_version": PROMPT_VERSION,
             "generated_at": datetime.now(UTC).isoformat(),
             "analysis_model": {"provider": provider, "model": model, "temperature": 0.1,
+                               "thinking_enabled": False if non_thinking else None,
                                "calls": client.calls, "usage": usage},
             "scope": {key: packet[key] for key in ("kind", "name", "metadata")},
             "evidence": packet["evidence"], **checked,
