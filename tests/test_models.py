@@ -7,9 +7,9 @@ import pytest
 from campus_sim.domain import Config, policy_context
 from campus_sim.models import (
     DECISION_PROMPT_VERSION,
+    TEACHER_PROMPT_VERSION,
     HandshakeTimeout,
     ModelClient,
-    TEACHER_PROMPT_VERSION,
     _action,
     _action_from_provider,
     _dialogue,

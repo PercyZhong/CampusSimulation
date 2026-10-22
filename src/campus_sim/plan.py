@@ -26,8 +26,8 @@ from .mechanism import campus_plugin
 from .models import (
     DECISION_PROMPT_VERSION,
     DIALOGUE_PROMPT_VERSION,
-    ModelClient,
     TEACHER_PROMPT_VERSION,
+    ModelClient,
 )
 from .population import CLASS_SIZE
 from .schedule import campus_schedule_plugin

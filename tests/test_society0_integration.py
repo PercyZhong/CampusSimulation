@@ -68,8 +68,8 @@ def test_llm_teacher_selects_only_observed_absence_candidate(monkeypatch, tmp_pa
     summary = export(path)
     events = [json.loads(line) for line in (path / "events.jsonl").read_text(
         encoding="utf-8").splitlines()]
-    teacher = [event for event in events if event["action"] == "teacher_review"
-               and event["day"] == 3][0]
+    teacher = next(event for event in events if event["action"] == "teacher_review"
+                   and event["day"] == 3)
     assert teacher["detail"]["student_id"] == "s001"
     assert teacher["detail"]["approach"] == "study_plan"
     assert teacher["detail"]["backend"] == "llm"
