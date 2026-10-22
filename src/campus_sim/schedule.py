@@ -29,6 +29,12 @@ def campus_schedule_plugin(config, actor_ids, staff_ids, teacher_ids):
                               tables={"teacher_actions": (
                 {"actor": item.actor_id, **item.result.value} for item in results)})
 
+        async def adviser_review(phase):
+            results = await activate(phase, staff_ids)
+            return StepResult(metrics={"adviser_reviews": len(results)},
+                              tables={"adviser_actions": (
+                {"actor": item.actor_id, **item.result.value} for item in results)})
+
         async def decide(phase):
             results = await activate(phase, actor_ids)
             return StepResult(metrics={"decisions": len(results)}, tables={"actions": (
@@ -63,8 +69,10 @@ def campus_schedule_plugin(config, actor_ids, staff_ids, teacher_ids):
                       Phase("afternoon", period_decide("afternoon")),
                       Phase("evening", period_decide("evening")))
                      if config.periods_per_day == 3 else (Phase("decide", decide),))
+        adviser_phases = ((Phase("adviser_review", adviser_review),)
+                          if config.driver == "llm" else ())
         context.provide("schedule", SequenceSchedule(range(config.start, config.end + 1),
             (Phase("prepare", prepare), Phase("staff_shift", staff_shift),
              Phase("teacher_review", teacher_review),
-             *decisions, Phase("settle", settle))))
+             *decisions, *adviser_phases, Phase("settle", settle))))
     return Plugin("schedule", ("campus", "runtime"), install)

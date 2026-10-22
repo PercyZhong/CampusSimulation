@@ -24,6 +24,7 @@ from .domain import (
 )
 from .mechanism import campus_plugin
 from .models import (
+    ADVISER_PROMPT_VERSION,
     DECISION_PROMPT_VERSION,
     DIALOGUE_PROMPT_VERSION,
     TEACHER_PROMPT_VERSION,
@@ -54,6 +55,26 @@ def build(raw):
     async def rule(session):
         actor = session.actor.id
         if actor in staff_ids:
+            if model_client is not None:
+                context = json.loads((await session.information.read(
+                    "/advisers/" + actor)).data)
+                if context["on_shift"]:
+                    args = {"follow_up_ids": [], "referral_ids": []}
+                    can_follow_up = bool(context["follow_up_candidates"]
+                                         and context["max_follow_ups"] > 0)
+                    if can_follow_up or context["referral_candidates"]:
+                        follow_ids, referral_ids, usage = model_client.adviser_decide(
+                            day=session.moment.time, adviser=actor,
+                            follow_up_candidates=context["follow_up_candidates"],
+                            referral_candidates=context["referral_candidates"],
+                            max_follow_ups=context["max_follow_ups"])
+                        args.update(follow_up_ids=follow_ids, referral_ids=referral_ids,
+                                    provider=config.model_provider, model=config.model_id,
+                                    prompt_version=ADVISER_PROMPT_VERSION, usage=usage)
+                    result = await session.actions.invoke("campus.adviser_review",
+                        Ref("campus", "staff", actor), args)
+                    return DriverResult("completed", {"action": "adviser_review",
+                        "status": result.status}, "rule")
             result = await session.actions.invoke("campus.staff_shift",
                 Ref("campus", "staff", actor), {})
             return DriverResult("completed", {"action": "staff_shift",
@@ -176,7 +197,7 @@ def build(raw):
                               actions=("interaction", "actions"), store=("storage", "store"),
                               results=("results", "results"),
                               max_activations=config.n_students * config.periods_per_day +
-                              config.n_staff + len(teacher_ids)),
+                              config.n_staff * (2 if model_client else 1) + len(teacher_ids)),
                campus_schedule_plugin(config, ids, staff_ids, teacher_ids)]
     public = asdict(config)
     if "periods_per_day" not in raw:
@@ -193,6 +214,6 @@ def build(raw):
                        "config_sha256": config_hash, "driver": config.driver},
         time={"start": config.start, "end": config.end, "unit": "day"},
         budgets={"max_activations": config.n_students * config.periods_per_day +
-                 config.n_staff + len(teacher_ids),
+                 config.n_staff * (2 if model_client else 1) + len(teacher_ids),
                  "http_requests": config.max_model_calls,
                  "paid_model_calls": config.max_model_calls}))

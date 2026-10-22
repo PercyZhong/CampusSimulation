@@ -6,6 +6,7 @@ import pytest
 
 from campus_sim.domain import Config, policy_context
 from campus_sim.models import (
+    ADVISER_PROMPT_VERSION,
     DECISION_PROMPT_VERSION,
     TEACHER_PROMPT_VERSION,
     HandshakeTimeout,
@@ -16,6 +17,36 @@ from campus_sim.models import (
     _dialogue_from_provider,
     choices,
 )
+
+
+def test_adviser_decision_uses_only_eligible_service_records(monkeypatch):
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "local-test-key")
+    prompts = []
+    responses = [
+        '{"follow_up_ids":["s000"],"referral_ids":["s001"]}',
+        '{"follow_up_ids":["s999"],"referral_ids":[]}',
+    ]
+
+    def fake_post(url, headers, payload):
+        prompts.append(payload)
+        return {"choices": [{"message": {"content": responses.pop(0)}}],
+                "usage": {"total_tokens": 8}}
+
+    monkeypatch.setattr("campus_sim.models._post", fake_post)
+    client = ModelClient("qwen", "qwen-plus", 2)
+    kwargs = {"day": 3, "adviser": "c000",
+              "follow_up_candidates": [{"student_id": "s000", "days_since_support": 2}],
+              "referral_candidates": [{"student_id": "s001", "basis": "long_wait"}],
+              "max_follow_ups": 1}
+    follow, referrals, usage = client.adviser_decide(**kwargs)
+    assert (follow, referrals) == (["s000"], ["s001"])
+    assert usage["request_calls"] == 1
+    follow, referrals, usage = client.adviser_decide(**kwargs)
+    assert (follow, referrals) == ([], []) and usage["parse_fallback"]
+    assert set(json.loads(prompts[0]["messages"][1]["content"])) == {
+        "day", "adviser_id", "follow_up_candidates", "referral_candidates", "max_follow_ups"}
+    assert "stress" not in prompts[0]["messages"][1]["content"]
+    assert ADVISER_PROMPT_VERSION == "adviser-support-v1"
 
 
 def test_teacher_decision_uses_attendance_only_and_rejects_ineligible_choice(monkeypatch):
@@ -47,12 +78,12 @@ def test_teacher_decision_uses_attendance_only_and_rejects_ineligible_choice(mon
     assert TEACHER_PROMPT_VERSION == "teacher-attendance-v1"
 
 
-def test_teacher_call_budget_includes_possible_review_days():
+def test_role_call_budget_includes_teacher_and_adviser_review_days():
     raw = {"end": 3, "n_students": 6, "driver": "llm", "model_provider": "qwen",
-           "model_id": "qwen-plus", "max_model_calls": 21}
-    with pytest.raises(ValueError, match="at least 22"):
+           "model_id": "qwen-plus", "max_model_calls": 25}
+    with pytest.raises(ValueError, match="at least 26"):
         Config.parse(raw)
-    assert Config.parse({**raw, "max_model_calls": 22}).max_model_calls == 22
+    assert Config.parse({**raw, "max_model_calls": 26}).max_model_calls == 26
 
 
 @pytest.mark.parametrize("provider,key_name", [
@@ -105,13 +136,13 @@ def test_model_configuration_and_response(monkeypatch):
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     with pytest.raises(ValueError, match="DEEPSEEK_API_KEY"):
         ModelClient("deepseek", "deepseek-chat", 1)
-    with pytest.raises(ValueError, match="at least 232"):
+    with pytest.raises(ValueError, match="at least 240"):
         Config.parse({"end": 5, "n_students": 40, "driver": "llm",
                       "model_provider": "qwen", "model_id": "qwen-plus",
                       "max_model_calls": 199})
     with pytest.raises(ValueError, match="model_temperature"):
         Config.parse({"driver": "llm", "model_provider": "qwen", "model_id": "qwen-plus",
-                      "max_model_calls": 60, "n_students": 1, "model_temperature": 2.1})
+                      "max_model_calls": 120, "n_students": 1, "model_temperature": 2.1})
     student = {"id": "s000", "willingness": 0.5, "connection": 0.5,
                "outreach_seen": False, "pending_day": None, "supported": False}
     before = policy_context(Config(condition="outreach"), student, 1)

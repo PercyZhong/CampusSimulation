@@ -150,6 +150,146 @@ class Campus:
         return ActionResult(result["status"], result)
 
     @staticmethod
+    def referral_basis(wait, missed_course_streak):
+        if wait >= 3 and missed_course_streak >= 2:
+            return "long_wait_and_observed_absence"
+        if wait >= 3:
+            return "long_wait"
+        if missed_course_streak >= 2:
+            return "observed_absence"
+        return None
+
+    def _adviser_context(self, view, actor, day):
+        shifts = view.query("SELECT actor,slots FROM campus_staff_shifts WHERE day=? "
+                            "ORDER BY actor", (day,))
+        own = next((slots for staff_id, slots in shifts if staff_id == actor), None)
+        if own is None:
+            return {"adviser_id": actor, "on_shift": False,
+                    "referral_candidates": [], "follow_up_candidates": [],
+                    "max_follow_ups": 0}
+        accepted = []
+        own_used = 0
+        for student_id, action, detail in view.iter_query(
+                "SELECT actor,action,detail FROM campus_events WHERE day=? AND status='completed' "
+                "AND action IN ('accept_support','staff_follow_up') ORDER BY ordinal", (day,)):
+            data = json.loads(detail)
+            if data.get("staff_id") != actor:
+                continue
+            own_used += 1
+            if action != "accept_support":
+                continue
+            accepted.append((student_id, data))
+        referrals = []
+        for student_id, detail in accepted:
+            row = view.query("SELECT body FROM campus_students WHERE id=?", (student_id,),
+                             max_rows=1)
+            if not row:
+                continue
+            streak = json.loads(row[0][0])["missed_course_streak"]
+            basis = self.referral_basis(detail["wait_days"], streak)
+            if basis:
+                referrals.append({"student_id": student_id, "basis": basis,
+                                  "wait_days": detail["wait_days"],
+                                  "observed_absence_streak": streak})
+        due = []
+        follow_up = policy_components(self.config)["follow_up"]
+        if follow_up["enabled"]:
+            for student_id, body in view.iter_query(
+                    "SELECT id,body FROM campus_students ORDER BY id"):
+                state = json.loads(body)
+                supported_day = state["supported_day"]
+                if (supported_day is not None and not state["follow_up_sent"]
+                        and day - supported_day >= follow_up["days_after_support"]):
+                    due.append({"student_id": student_id,
+                                "days_since_support": day - supported_day,
+                                "supported_day": supported_day})
+        due.sort(key=lambda item: (item["supported_day"], item["student_id"]))
+        service_used = view.query("SELECT used FROM campus_service_usage WHERE day=?", (day,))
+        remaining = max(0, self.available_slots(view, day)
+                        - (service_used[0][0] if service_used else 0)
+                        - self.follow_up_slots_used(view, day))
+        return {"adviser_id": actor, "on_shift": True,
+                "referral_candidates": referrals,
+                "follow_up_candidates": due[:5],
+                "max_follow_ups": min(max(0, own - own_used), remaining)}
+
+    def adviser_context(self, actor, day):
+        return self.store.read(lambda view: self._adviser_context(view, actor, day))
+
+    def adviser_review(self, scope, target, args):
+        day, actor = scope.moment.time, scope.actor
+        if target.key != actor:
+            return ActionResult("rejected", {"reason": "wrong_actor"})
+
+        def write(writer):
+            if writer.query("SELECT 1 FROM campus_events WHERE day=? AND actor=? "
+                            "AND action='adviser_review'", (day, actor), max_rows=1):
+                return {"status": "rejected", "reason": "already_reviewed_today"}
+            context = self._adviser_context(writer, actor, day)
+            if not context["on_shift"]:
+                return {"status": "rejected", "reason": "not_on_shift"}
+            follow_ids = args["follow_up_ids"]
+            referral_ids = args["referral_ids"]
+            if (len(follow_ids) > context["max_follow_ups"]
+                    or len(follow_ids) != len(set(follow_ids))
+                    or len(referral_ids) != len(set(referral_ids))
+                    or not set(follow_ids) <= {
+                        item["student_id"] for item in context["follow_up_candidates"]}
+                    or not set(referral_ids) <= {
+                        item["student_id"] for item in context["referral_candidates"]}):
+                self.event(writer, day, actor, "adviser_review", "rejected",
+                           "ineligible_adviser_selection",
+                           {"follow_up_ids": follow_ids, "referral_ids": referral_ids,
+                            "backend": "llm" if "provider" in args else "rule",
+                            **({"provider": args["provider"], "model": args["model"],
+                                "prompt_version": args["prompt_version"],
+                                "usage": args["usage"]} if "provider" in args else {})})
+                return {"status": "rejected", "reason": "ineligible_adviser_selection"}
+            self.event(writer, day, actor, "adviser_review", "completed",
+                       detail={"follow_up_ids": follow_ids, "referral_ids": referral_ids,
+                               "backend": "llm" if "provider" in args else "rule",
+                               **({"provider": args["provider"], "model": args["model"],
+                                   "prompt_version": args["prompt_version"],
+                                   "usage": args["usage"]} if "provider" in args else {})})
+            by_referral = {item["student_id"]: item for item in context["referral_candidates"]}
+            for student_id in referral_ids:
+                info = {"student_id": student_id, "staff_id": actor,
+                        "service": "professional_counseling",
+                        "basis": by_referral[student_id]["basis"],
+                        "outcome": "information_offered_only"}
+                self.event(writer, day, actor, "professional_referral_offer", "offered",
+                           detail=info)
+                self.event(writer, day, student_id, "referral_information", "received",
+                           detail=info)
+            used = self.follow_up_slots_used(writer, day)
+            served = writer.query("SELECT used FROM campus_service_usage WHERE day=?", (day,))
+            served = served[0][0] if served else 0
+            follow_up = policy_components(self.config)["follow_up"]
+            for student_id in follow_ids:
+                body = writer.query("SELECT body FROM campus_students WHERE id=?", (student_id,),
+                                    max_rows=1)[0][0]
+                state = json.loads(body)
+                state["follow_up_sent"] = True
+                state["stress"] = clamp(state["stress"] - 0.04)
+                state["mood"] = clamp(state["mood"] + 0.03 * (1 - state["mood"]))
+                self.remember(state, {"day": day, "action": "staff_follow_up",
+                                      "status": "completed"})
+                writer.execute("UPDATE campus_students SET body=? WHERE id=?",
+                               (dumps(state), student_id))
+                used += 1
+                self.event(writer, day, student_id, "staff_follow_up", "completed",
+                           detail={"days_after_support": follow_up["days_after_support"],
+                                   "service_slot": served + used, "staff_id": actor})
+            if follow_ids:
+                writer.execute("INSERT INTO campus_follow_up_usage VALUES(?,?) ON CONFLICT(day) "
+                               "DO UPDATE SET used=?", (day, used, used))
+            return {"status": "completed", "follow_ups": len(follow_ids),
+                    "referrals": len(referral_ids)}
+
+        result = self.store.transaction(write)
+        return ActionResult(result["status"], result)
+
+    @staticmethod
     def teacher_candidates(view, day, class_id):
         """Expose only observed attendance and its consecutive absence count."""
         candidates = []
@@ -773,7 +913,7 @@ class Campus:
             detail["feedback"] = feedback
             self.event(writer, day, actor, action, "completed",
                        detail=detail)
-            if (action == "accept_support"
+            if (self.config.driver == "rule" and action == "accept_support"
                     and (wait >= 3 or state["missed_course_streak"] >= 2)):
                 referral = {"student_id": actor, "staff_id": assigned_staff,
                             "service": "professional_counseling",
@@ -801,7 +941,7 @@ class Campus:
                 raise ValueError("staff usage exceeds registered staff slots")
             follow_up = policy_components(self.config)["follow_up"]
             follow_used = self.follow_up_slots_used(writer, day)
-            if follow_up["enabled"]:
+            if follow_up["enabled"] and self.config.driver == "rule":
                 candidates = []
                 for sid, body in writer.iter_query("SELECT id,body FROM campus_students"):
                     state = json.loads(body)
@@ -954,6 +1094,8 @@ class CampusInformation:
             return Ref("campus", "student", parts[1])
         if len(parts) == 2 and parts[0] == "teachers":
             return Ref("campus", "teacher", parts[1])
+        if len(parts) == 2 and parts[0] == "advisers":
+            return Ref("campus", "staff", parts[1])
         if path == "/service":
             return Ref("campus", "service", "main")
         if path == "/course":
@@ -970,6 +1112,8 @@ class CampusInformation:
             raise LookupError(path)
         if ref.kind == "teacher" and ref.key != scope.actor:
             raise PermissionError("teacher context belongs to another actor")
+        if path.startswith("/advisers/") and ref.key != scope.actor:
+            raise PermissionError("adviser context belongs to another actor")
         if path.startswith("/peer_dialogue/") and ref.key != scope.actor:
             raise PermissionError("peer dialogue context belongs to another actor")
         if path.startswith("/peer_dialogue/"):
@@ -988,6 +1132,8 @@ class CampusInformation:
                     key: state[key] for key in ("stress", "mood", "connection", "recent_events",
                                              "social_memory", "long_term_memory")}}
             data = self.campus.store.read(partner_context)
+        elif path.startswith("/advisers/"):
+            data = self.campus.adviser_context(ref.key, scope.moment.time)
         elif ref.kind == "teacher":
             data = self.campus.teacher_context(ref.key, scope.moment.time)
         elif ref.kind == "student":
@@ -1076,6 +1222,7 @@ def campus_plugin(config):
         actions = context.require("interaction", "actions")
         information.mount("/students", CampusInformation(campus))
         information.mount("/teachers", CampusInformation(campus))
+        information.mount("/advisers", CampusInformation(campus))
         information.mount("/service", CampusInformation(campus))
         information.mount("/course", CampusInformation(campus))
         information.mount("/peers", CampusInformation(campus))
@@ -1100,6 +1247,18 @@ def campus_plugin(config):
             lambda scope, target, args: campus.staff_shift(scope, target),
             available=lambda scope, target: target.key == scope.actor),
             dependencies=("campus_staff", "campus_staff_shifts"))
+        adviser_schema = {"type": "object", "properties": {
+            "follow_up_ids": {"type": "array", "items": {"type": "string"}},
+            "referral_ids": {"type": "array", "items": {"type": "string"}},
+            "provider": {"type": "string"}, "model": {"type": "string"},
+            "prompt_version": {"type": "string"}, "usage": {"type": "object"}},
+            "required": ["follow_up_ids", "referral_ids"], "additionalProperties": False}
+        actions.register(Action("campus.adviser_review", ("campus", "staff"),
+            "adviser_review", adviser_schema,
+            lambda scope, target, args: campus.adviser_review(scope, target, args),
+            available=lambda scope, target: target.key == scope.actor),
+            dependencies=("campus_staff_shifts", "campus_students", "campus_events",
+                          "campus_service_usage", "campus_follow_up_usage"))
         teacher_schema = {"type": "object", "properties": {
             "student_id": {"type": ["string", "null"]}, "provider": {"type": "string"},
             "approach": {"type": "string", "enum": ["none", "check_in", "study_plan"]},

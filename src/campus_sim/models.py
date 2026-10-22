@@ -18,6 +18,7 @@ ACTION_NAMES = frozenset(("attend", "rest", "peer", "request", "accept_support")
 DECISION_PROMPT_VERSION = "long-memory-v1"
 DIALOGUE_PROMPT_VERSION = "peer-dialogue-v1"
 TEACHER_PROMPT_VERSION = "teacher-attendance-v1"
+ADVISER_PROMPT_VERSION = "adviser-support-v1"
 OPENAI_COMPATIBLE = {
     "deepseek": "https://api.deepseek.com/chat/completions",
     "qwen": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
@@ -246,6 +247,45 @@ class ModelClient:
             selected, approach = None, "none"
             usage = {**usage, "parse_fallback": True}
         return selected, approach, usage
+
+    def adviser_decide(self, *, day, adviser, follow_up_candidates,
+                       referral_candidates, max_follow_ups):
+        """Select bounded nonclinical support actions from service records."""
+        follow_ids = {item["student_id"] for item in follow_up_candidates}
+        referral_ids = {item["student_id"] for item in referral_candidates}
+        system = ("You are a fictional nonclinical student adviser in a synthetic campus "
+                  "simulation. Choose eligible students for ordinary follow-up and, "
+                  "separately, students to receive information about professional "
+                  "counseling services. Return only JSON with follow_up_ids and "
+                  "referral_ids, each a list of student IDs from its corresponding "
+                  "candidate list. You may leave either list empty. Follow-up IDs must "
+                  "be unique and no more than max_follow_ups. Prefer older due "
+                  "follow-ups when capacity is scarce. A referral is information only, "
+                  "not an appointment, diagnosis, treatment, or risk assessment. "
+                  "Do not infer private psychological states. The simulator enforces "
+                  "service capacity, eligibility, and one review per day.")
+        user = json.dumps({"day": day, "adviser_id": adviser,
+                           "follow_up_candidates": follow_up_candidates,
+                           "referral_candidates": referral_candidates,
+                           "max_follow_ups": max_follow_ups}, ensure_ascii=False)
+        content, usage = self._request(system, user, 240)
+        try:
+            if not isinstance(content, str):
+                raise TypeError("model returned no adviser decision text")
+            data = _json_object_prefix(content)
+            if not isinstance(data, dict):
+                raise TypeError("model adviser decision must be an object")
+            follow, referrals = data.get("follow_up_ids"), data.get("referral_ids")
+            if (not isinstance(follow, list) or not isinstance(referrals, list)
+                    or len(follow) > max_follow_ups or len(follow) != len(set(follow))
+                    or len(referrals) != len(set(referrals))
+                    or any(student_id not in follow_ids for student_id in follow)
+                    or any(student_id not in referral_ids for student_id in referrals)):
+                raise ValueError("model returned ineligible adviser decision")
+        except (TypeError, ValueError):
+            follow, referrals = [], []
+            usage = {**usage, "parse_fallback": True}
+        return follow, referrals, usage
 
     def decide(self, *, day, student, course, service, peers, policy):
         system = ("You act as one fictional student in a synthetic campus simulation. "

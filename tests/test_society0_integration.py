@@ -62,7 +62,7 @@ def test_llm_teacher_selects_only_observed_absence_candidate(monkeypatch, tmp_pa
 
     monkeypatch.setattr("campus_sim.models._post", fake_post)
     raw = {"end": 3, "n_students": 2, "seed": seed, "driver": "llm",
-           "model_provider": "qwen", "model_id": "qwen-plus", "max_model_calls": 8}
+           "model_provider": "qwen", "model_id": "qwen-plus", "max_model_calls": 12}
     path = tmp_path / "teacher-llm"
     asyncio.run(run_plan(path, build(raw)))
     summary = export(path)
@@ -81,6 +81,63 @@ def test_llm_teacher_selects_only_observed_absence_candidate(monkeypatch, tmp_pa
     assert summary["network_calls"] == 6 + len(teacher_prompts)
     assert all(set(prompt) == {"day", "teacher_id", "class_id", "candidates"}
                for prompt in teacher_prompts)
+
+
+def test_llm_adviser_referral_and_follow_up_stay_within_service_rules(monkeypatch, tmp_path):
+    import asyncio
+
+    from society0.kernel.runner import run_plan
+
+    from campus_sim.analysis import export
+    from campus_sim.domain import Config, policy_context
+    from campus_sim.plan import build
+    from campus_sim.population import make_population
+
+    seed = next(seed for seed in range(1000) if "request" in policy_context(
+        Config(n_students=1, n_staff=1, access_barrier=0, seed=seed),
+        make_population(Config(n_students=1, n_staff=1, access_barrier=0,
+                               seed=seed))[0][0], 1)["available_actions"])
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "local-test-key")
+    requests = []
+
+    def fake_post(url, headers, payload):
+        user = json.loads(payload["messages"][1]["content"])
+        requests.append((payload["max_tokens"], user))
+        if payload["max_tokens"] == 80:
+            action = {1: "request", 4: "accept_support"}.get(user["day"], "rest")
+            content = json.dumps({"action": action})
+        elif payload["max_tokens"] == 100:
+            content = '{"student_id":null,"approach":"none"}'
+        else:
+            content = json.dumps({
+                "follow_up_ids": ["s000"] if user["day"] == 5 else [],
+                "referral_ids": ["s000"] if user["day"] == 4 else [],
+            })
+        return {"choices": [{"message": {"content": content}}],
+                "usage": {"total_tokens": 9}}
+
+    monkeypatch.setattr("campus_sim.models._post", fake_post)
+    raw = {"end": 5, "n_students": 1, "n_staff": 1, "capacity": 3,
+           "seed": seed, "access_barrier": 0, "driver": "llm",
+           "model_provider": "qwen", "model_id": "qwen-plus", "max_model_calls": 20,
+           "policy_components": {"follow_up": {"enabled": True,
+                                               "days_after_support": 1}}}
+    path = tmp_path / "adviser-llm"
+    asyncio.run(run_plan(path, build(raw)))
+    summary = export(path)
+    events = [json.loads(line) for line in (path / "events.jsonl").read_text(
+        encoding="utf-8").splitlines()]
+    referrals = [event for event in events if event["action"] ==
+                 "professional_referral_offer"]
+    follows = [event for event in events if event["action"] == "staff_follow_up"]
+    assert len(referrals) == len(follows) == 1
+    assert referrals[0]["day"] == 4 and referrals[0]["detail"]["staff_id"] == "c000"
+    assert follows[0]["day"] == 5 and follows[0]["detail"]["staff_id"] == "c000"
+    assert summary["adviser_model_decision_count"] == 2
+    assert summary["network_calls"] == len(requests)
+    adviser_prompts = [user for max_tokens, user in requests if max_tokens == 240]
+    assert len(adviser_prompts) == 2
+    assert all("stress" not in json.dumps(prompt) for prompt in adviser_prompts)
 
 
 def test_two_day_completed_action_and_export(tmp_path):

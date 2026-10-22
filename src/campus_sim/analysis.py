@@ -663,8 +663,12 @@ def summarize(run_dir):
     teacher_model_reviews = [e for e in events if e["action"] == "teacher_review"
                              and e["status"] == "completed"
                              and e["detail"].get("backend") == "llm"]
+    adviser_model_reviews = [e for e in events if e["action"] == "adviser_review"
+                             and e["detail"].get("backend") == "llm"]
     recorded_model_calls += sum(e["detail"]["usage"].get("request_calls", 1)
                                 for e in teacher_model_reviews)
+    recorded_model_calls += sum(e["detail"]["usage"].get("request_calls", 1)
+                                for e in adviser_model_reviews)
     summary = {"schema_version": SCHEMA_VERSION, "run_id": status["run_id"],
                "status": "failed_diagnostic" if status["failed"] else "complete_steps_only",
                "complete_steps": status["complete"]["step"],
@@ -678,6 +682,7 @@ def summarize(run_dir):
                "class_roster": class_roster,
                "teacher_count": len(classes),
                "teacher_model_decision_count": len(teacher_model_reviews),
+               "adviser_model_decision_count": len(adviser_model_reviews),
                "committee_count": sum(student["class_committee"] for student in students),
                "academic_check_in_count": sum(e["action"] == "academic_check_in"
                                               for e in events),

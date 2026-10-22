@@ -80,7 +80,7 @@ def test_batch_plan_rejects_invalid_dimensions(overrides):
 def test_online_key_is_used_only_for_validation_and_not_saved(monkeypatch):
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     data = payload(conditions=["baseline"], seeds=[11], provider="deepseek",
-                   model="deepseek-chat", max_model_calls=320)
+                   model="deepseek-chat", max_model_calls=350)
     with pytest.raises(ValueError, match="DEEPSEEK_API_KEY"):
         build_batch_plan(PROJECT, data)
     plan = build_batch_plan(PROJECT, data, api_key="secret-for-this-run")
@@ -105,7 +105,7 @@ def test_online_key_reaches_only_child_environment_not_saved_configs(tmp_path, m
     thread.start()
     try:
         data = payload(conditions=["baseline"], seeds=[11], provider="deepseek",
-                       model="deepseek-chat", max_model_calls=320,
+                       model="deepseek-chat", max_model_calls=350,
                        api_key="secret-for-this-run")
         request = urllib.request.Request(
             f"http://127.0.0.1:{server.server_port}/api/batches",
@@ -126,7 +126,7 @@ def test_online_key_reaches_only_child_environment_not_saved_configs(tmp_path, m
         assert "secret-for-this-run" not in status_file.read_text(encoding="utf-8")
         started.clear()
         single = payload(provider="deepseek", model="deepseek-chat",
-                         max_model_calls=320, api_key="secret-for-this-run")
+                         max_model_calls=350, api_key="secret-for-this-run")
         request = urllib.request.Request(
             f"http://127.0.0.1:{server.server_port}/api/runs",
             json.dumps(single).encode("utf-8"), {"Content-Type": "application/json"},

@@ -58,7 +58,8 @@ class Config:
             teacher_days = max(0, days - 1)
             teacher_count = (value.n_students + CLASS_SIZE - 1) // CLASS_SIZE
             minimum_calls = (value.n_students * days * value.periods_per_day
-                             + teacher_count * teacher_days)
+                             + teacher_count * teacher_days
+                             + value.n_staff * max(0, days - 1))
             if value.max_model_calls < minimum_calls:
                 raise ValueError(
                     f"max_model_calls must be at least {minimum_calls} for this run"
