@@ -54,7 +54,11 @@ class Config:
         if value.driver == "llm":
             from .models import validate
             validate(value.model_provider, value.model_id, value.max_model_calls)
-            minimum_calls = value.n_students * (value.end - value.start + 1) * value.periods_per_day
+            days = value.end - value.start + 1
+            teacher_days = max(0, days - 1)
+            teacher_count = (value.n_students + CLASS_SIZE - 1) // CLASS_SIZE
+            minimum_calls = (value.n_students * days * value.periods_per_day
+                             + teacher_count * teacher_days)
             if value.max_model_calls < minimum_calls:
                 raise ValueError(
                     f"max_model_calls must be at least {minimum_calls} for this run"

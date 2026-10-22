@@ -37,6 +37,52 @@ def test_class_roles_join_schedule_and_export_without_extra_students(tmp_path):
     assert sum(event["action"] == "committee_check_in" for event in events) == 6
 
 
+def test_llm_teacher_selects_only_observed_absence_candidate(monkeypatch, tmp_path):
+    import asyncio
+
+    from society0.kernel.runner import run_plan
+
+    from campus_sim.analysis import export
+    from campus_sim.domain import campus_calendar
+    from campus_sim.plan import build
+
+    seed = next(seed for seed in range(1000) if all(
+        campus_calendar(seed, day, "s001")["course"]["open"] for day in (1, 2)))
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "local-test-key")
+    teacher_prompts = []
+
+    def fake_post(url, headers, payload):
+        if payload["max_tokens"] == 100:
+            teacher_prompts.append(json.loads(payload["messages"][1]["content"]))
+            content = '{"student_id":"s001","approach":"study_plan"}'
+        else:
+            content = '{"action":"rest"}'
+        return {"choices": [{"message": {"content": content}}],
+                "usage": {"total_tokens": 9}}
+
+    monkeypatch.setattr("campus_sim.models._post", fake_post)
+    raw = {"end": 3, "n_students": 2, "seed": seed, "driver": "llm",
+           "model_provider": "qwen", "model_id": "qwen-plus", "max_model_calls": 8}
+    path = tmp_path / "teacher-llm"
+    asyncio.run(run_plan(path, build(raw)))
+    summary = export(path)
+    events = [json.loads(line) for line in (path / "events.jsonl").read_text(
+        encoding="utf-8").splitlines()]
+    teacher = [event for event in events if event["action"] == "teacher_review"
+               and event["day"] == 3][0]
+    assert teacher["detail"]["student_id"] == "s001"
+    assert teacher["detail"]["approach"] == "study_plan"
+    assert teacher["detail"]["backend"] == "llm"
+    assert teacher["detail"]["usage"]["request_calls"] == 1
+    assert any(event["action"] == "academic_check_in" and event["actor"] == "s001"
+               and event["detail"]["approach"] == "study_plan"
+               for event in events)
+    assert len(teacher_prompts) == summary["teacher_model_decision_count"]
+    assert summary["network_calls"] == 6 + len(teacher_prompts)
+    assert all(set(prompt) == {"day", "teacher_id", "class_id", "candidates"}
+               for prompt in teacher_prompts)
+
+
 def test_two_day_completed_action_and_export(tmp_path):
     import asyncio
 

@@ -9,12 +9,50 @@ from campus_sim.models import (
     DECISION_PROMPT_VERSION,
     HandshakeTimeout,
     ModelClient,
+    TEACHER_PROMPT_VERSION,
     _action,
     _action_from_provider,
     _dialogue,
     _dialogue_from_provider,
     choices,
 )
+
+
+def test_teacher_decision_uses_attendance_only_and_rejects_ineligible_choice(monkeypatch):
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "local-test-key")
+    prompts = []
+    responses = ['{"student_id":"s001","approach":"study_plan"}',
+                 '{"student_id":"s999","approach":"study_plan"}']
+
+    def fake_post(url, headers, payload):
+        prompts.append(payload)
+        return {"choices": [{"message": {"content": responses.pop(0)}}],
+                "usage": {"total_tokens": 8}}
+
+    monkeypatch.setattr("campus_sim.models._post", fake_post)
+    client = ModelClient("qwen", "qwen-plus", 2)
+    candidates = [{"student_id": "s001", "missed_course_streak": 2}]
+    selected, approach, usage = client.teacher_decide(
+        day=3, teacher="t000", class_id="class-000", candidates=candidates)
+    assert (selected, approach) == ("s001", "study_plan")
+    assert not usage.get("parse_fallback")
+    selected, approach, usage = client.teacher_decide(
+        day=3, teacher="t000", class_id="class-000",
+        candidates=candidates)
+    assert selected is None and approach == "none" and usage["parse_fallback"]
+    assert usage["request_calls"] == 1
+    assert "s001" in prompts[0]["messages"][1]["content"]
+    assert "stress" not in prompts[0]["messages"][1]["content"]
+    assert "diagnose" in prompts[0]["messages"][0]["content"]
+    assert TEACHER_PROMPT_VERSION == "teacher-attendance-v1"
+
+
+def test_teacher_call_budget_includes_possible_review_days():
+    raw = {"end": 3, "n_students": 6, "driver": "llm", "model_provider": "qwen",
+           "model_id": "qwen-plus", "max_model_calls": 21}
+    with pytest.raises(ValueError, match="at least 22"):
+        Config.parse(raw)
+    assert Config.parse({**raw, "max_model_calls": 22}).max_model_calls == 22
 
 
 @pytest.mark.parametrize("provider,key_name", [
@@ -67,13 +105,13 @@ def test_model_configuration_and_response(monkeypatch):
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     with pytest.raises(ValueError, match="DEEPSEEK_API_KEY"):
         ModelClient("deepseek", "deepseek-chat", 1)
-    with pytest.raises(ValueError, match="at least 200"):
+    with pytest.raises(ValueError, match="at least 232"):
         Config.parse({"end": 5, "n_students": 40, "driver": "llm",
                       "model_provider": "qwen", "model_id": "qwen-plus",
                       "max_model_calls": 199})
     with pytest.raises(ValueError, match="model_temperature"):
         Config.parse({"driver": "llm", "model_provider": "qwen", "model_id": "qwen-plus",
-                      "max_model_calls": 30, "n_students": 1, "model_temperature": 2.1})
+                      "max_model_calls": 60, "n_students": 1, "model_temperature": 2.1})
     student = {"id": "s000", "willingness": 0.5, "connection": 0.5,
                "outreach_seen": False, "pending_day": None, "supported": False}
     before = policy_context(Config(condition="outreach"), student, 1)

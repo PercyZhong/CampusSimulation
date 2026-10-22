@@ -149,7 +149,32 @@ class Campus:
         result = self.store.transaction(write)
         return ActionResult(result["status"], result)
 
-    def teacher_review(self, scope, target):
+    @staticmethod
+    def teacher_candidates(view, day, class_id):
+        """Expose only observed attendance and its consecutive absence count."""
+        candidates = []
+        for body, in view.iter_query("SELECT body FROM campus_students ORDER BY id"):
+            student = json.loads(body)
+            if (student["class_id"] == class_id and student["missed_course_streak"] >= 2
+                    and view.query("SELECT 1 FROM campus_events WHERE day=? AND actor=? "
+                                   "AND action='course_absence'", (day - 1, student["id"]),
+                                   max_rows=1)):
+                candidates.append({"student_id": student["id"],
+                                   "missed_course_streak": student["missed_course_streak"]})
+        return sorted(candidates, key=lambda item: (-item["missed_course_streak"],
+                                                     item["student_id"]))
+
+    def teacher_context(self, actor, day):
+        def read(view):
+            rows = view.query("SELECT body FROM campus_teachers WHERE id=?", (actor,), max_rows=1)
+            if not rows:
+                raise LookupError(actor)
+            class_id = json.loads(rows[0][0])["class_id"]
+            return {"teacher_id": actor, "class_id": class_id,
+                    "candidates": self.teacher_candidates(view, day, class_id)}
+        return self.store.read(read)
+
+    def teacher_review(self, scope, target, args):
         """Review observable attendance; offer one academic check-in per class and day."""
         day, actor = scope.moment.time, scope.actor
         if target.key != actor:
@@ -163,29 +188,38 @@ class Campus:
                             (day, actor), max_rows=1):
                 return {"status": "rejected", "reason": "already_reviewed_today"}
             class_id = json.loads(rows[0][0])["class_id"]
-            classmates = []
-            for body, in writer.iter_query("SELECT body FROM campus_students ORDER BY id"):
-                student = json.loads(body)
-                if student["class_id"] == class_id:
-                    classmates.append(student)
-            candidates = sorted((student for student in classmates
-                                 if student["missed_course_streak"] >= 2 and writer.query(
-                                     "SELECT 1 FROM campus_events WHERE day=? AND actor=? "
-                                     "AND action='course_absence'", (day - 1, student["id"]),
-                                     max_rows=1)),
-                                key=lambda student: (-student["missed_course_streak"], student["id"]))
-            student = candidates[0] if candidates else None
+            candidates = self.teacher_candidates(writer, day, class_id)
+            selected = (args["student_id"] if "student_id" in args else
+                        candidates[0]["student_id"] if candidates else None)
+            if selected is not None and selected not in {
+                    candidate["student_id"] for candidate in candidates}:
+                return {"status": "rejected", "reason": "ineligible_student"}
+            approach = args.get("approach", "check_in" if selected else "none")
+            if ((selected is None and approach != "none") or
+                    (selected is not None and approach not in {"check_in", "study_plan"})):
+                return {"status": "rejected", "reason": "invalid_teacher_approach"}
             writer.execute("INSERT INTO campus_teacher_reviews VALUES(?,?)", (day, actor))
-            detail = {"class_id": class_id, "student_id": student["id"] if student else None,
-                      "basis": "observed_course_absence_streak"}
+            detail = {"class_id": class_id, "student_id": selected,
+                      "basis": "observed_course_absence_streak", "approach": approach,
+                      **({"backend": "llm", "provider": args["provider"],
+                          "model": args["model"], "prompt_version": args["prompt_version"],
+                          "usage": args["usage"]} if "provider" in args else
+                         {"backend": "rule"})}
             self.event(writer, day, actor, "teacher_review", "completed", detail=detail)
-            if student:
-                student["academic_engagement"] = clamp(student["academic_engagement"] + 0.015)
+            if selected:
+                body = writer.query("SELECT body FROM campus_students WHERE id=?", (selected,),
+                                    max_rows=1)[0][0]
+                student = json.loads(body)
+                student["academic_engagement"] = clamp(
+                    student["academic_engagement"] +
+                    (0.02 if approach == "study_plan" else 0.015))
+                if approach == "study_plan":
+                    student["self_efficacy"] = clamp(student["self_efficacy"] + 0.01)
                 writer.execute("UPDATE campus_students SET body=? WHERE id=?",
-                               (dumps(student), student["id"]))
-                self.event(writer, day, student["id"], "academic_check_in", "completed",
+                               (dumps(student), selected))
+                self.event(writer, day, selected, "academic_check_in", "completed",
                            detail={"teacher_id": actor, "class_id": class_id,
-                                   "basis": detail["basis"]})
+                                   "basis": detail["basis"], "approach": approach})
             return {"status": "completed", "student_id": detail["student_id"]}
 
         result = self.store.transaction(write)
@@ -918,6 +952,8 @@ class CampusInformation:
         parts = path.strip("/").split("/")
         if len(parts) == 2 and parts[0] == "students":
             return Ref("campus", "student", parts[1])
+        if len(parts) == 2 and parts[0] == "teachers":
+            return Ref("campus", "teacher", parts[1])
         if path == "/service":
             return Ref("campus", "service", "main")
         if path == "/course":
@@ -932,6 +968,8 @@ class CampusInformation:
         ref = self.ref(path)
         if ref is None:
             raise LookupError(path)
+        if ref.kind == "teacher" and ref.key != scope.actor:
+            raise PermissionError("teacher context belongs to another actor")
         if path.startswith("/peer_dialogue/") and ref.key != scope.actor:
             raise PermissionError("peer dialogue context belongs to another actor")
         if path.startswith("/peer_dialogue/"):
@@ -950,6 +988,8 @@ class CampusInformation:
                     key: state[key] for key in ("stress", "mood", "connection", "recent_events",
                                              "social_memory", "long_term_memory")}}
             data = self.campus.store.read(partner_context)
+        elif ref.kind == "teacher":
+            data = self.campus.teacher_context(ref.key, scope.moment.time)
         elif ref.kind == "student":
             state = self.campus.student(ref.key)
             data = {key: state[key] for key in ("id", "class_id", "class_committee",
@@ -1035,6 +1075,7 @@ def campus_plugin(config):
         information = context.require("interaction", "information")
         actions = context.require("interaction", "actions")
         information.mount("/students", CampusInformation(campus))
+        information.mount("/teachers", CampusInformation(campus))
         information.mount("/service", CampusInformation(campus))
         information.mount("/course", CampusInformation(campus))
         information.mount("/peers", CampusInformation(campus))
@@ -1059,9 +1100,14 @@ def campus_plugin(config):
             lambda scope, target, args: campus.staff_shift(scope, target),
             available=lambda scope, target: target.key == scope.actor),
             dependencies=("campus_staff", "campus_staff_shifts"))
+        teacher_schema = {"type": "object", "properties": {
+            "student_id": {"type": ["string", "null"]}, "provider": {"type": "string"},
+            "approach": {"type": "string", "enum": ["none", "check_in", "study_plan"]},
+            "model": {"type": "string"}, "prompt_version": {"type": "string"},
+            "usage": {"type": "object"}}, "additionalProperties": False}
         actions.register(Action("campus.teacher_review", ("campus", "teacher"),
-            "teacher_review", schema,
-            lambda scope, target, args: campus.teacher_review(scope, target),
+            "teacher_review", teacher_schema,
+            lambda scope, target, args: campus.teacher_review(scope, target, args),
             available=lambda scope, target: target.key == scope.actor),
             dependencies=("campus_teachers", "campus_teacher_reviews", "campus_students",
                           "campus_events"))

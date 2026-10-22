@@ -17,6 +17,7 @@ PROVIDERS = {
 ACTION_NAMES = frozenset(("attend", "rest", "peer", "request", "accept_support"))
 DECISION_PROMPT_VERSION = "long-memory-v1"
 DIALOGUE_PROMPT_VERSION = "peer-dialogue-v1"
+TEACHER_PROMPT_VERSION = "teacher-attendance-v1"
 OPENAI_COMPATIBLE = {
     "deepseek": "https://api.deepseek.com/chat/completions",
     "qwen": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
@@ -178,6 +179,7 @@ class ModelClient:
 
     def _request(self, system, user, max_tokens):
         self._reserve_call()
+        request_calls = 1
         provider = self.provider
         def send():
             if provider in OPENAI_COMPATIBLE:
@@ -209,9 +211,41 @@ class ModelClient:
             response = send()
         except HandshakeTimeout:
             self._reserve_call()
+            request_calls += 1
             response = send()
         content, usage = _content(response, provider)
-        return content, usage if isinstance(usage, dict) else {}
+        return content, {**(usage if isinstance(usage, dict) else {}),
+                         "request_calls": request_calls}
+
+    def teacher_decide(self, *, day, teacher, class_id, candidates):
+        """Choose one observable attendance candidate, or defer contact."""
+        allowed = {candidate["student_id"] for candidate in candidates}
+        system = ("You are a fictional class teacher in a synthetic campus simulation. "
+                  "Use only the prior observed course absences listed in candidates. "
+                  "Choose at most one student for ordinary academic support, or choose "
+                  "null to defer contact. Return only JSON with student_id and approach. "
+                  "For a selected ID, approach must be check_in (brief academic check-in) "
+                  "or study_plan (practical study planning). For null ID, use approach none. "
+                  "The ID must be in candidates. Do not diagnose, "
+                  "predict risk, provide counseling, or claim access to private states. "
+                  "The simulator enforces eligibility and the daily limit.")
+        user = json.dumps({"day": day, "teacher_id": teacher, "class_id": class_id,
+                           "candidates": candidates}, ensure_ascii=False)
+        content, usage = self._request(system, user, 100)
+        try:
+            if not isinstance(content, str):
+                raise TypeError("model returned no teacher decision text")
+            data = _json_object_prefix(content)
+            selected = data.get("student_id") if isinstance(data, dict) else object()
+            approach = data.get("approach") if isinstance(data, dict) else object()
+            if (selected is not None and selected not in allowed) or (
+                    selected is None and approach != "none") or (
+                    selected is not None and approach not in {"check_in", "study_plan"}):
+                raise ValueError("model returned ineligible teacher decision")
+        except (TypeError, ValueError):
+            selected, approach = None, "none"
+            usage = {**usage, "parse_fallback": True}
+        return selected, approach, usage
 
     def decide(self, *, day, student, course, service, peers, policy):
         system = ("You act as one fictional student in a synthetic campus simulation. "

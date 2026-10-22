@@ -23,7 +23,12 @@ from .domain import (
     scenario_context,
 )
 from .mechanism import campus_plugin
-from .models import DECISION_PROMPT_VERSION, DIALOGUE_PROMPT_VERSION, ModelClient
+from .models import (
+    DECISION_PROMPT_VERSION,
+    DIALOGUE_PROMPT_VERSION,
+    ModelClient,
+    TEACHER_PROMPT_VERSION,
+)
 from .population import CLASS_SIZE
 from .schedule import campus_schedule_plugin
 
@@ -54,8 +59,20 @@ def build(raw):
             return DriverResult("completed", {"action": "staff_shift",
                 "status": result.status}, "rule")
         if actor in teacher_ids:
+            args = {}
+            if model_client is not None:
+                context = json.loads((await session.information.read(
+                    "/teachers/" + actor)).data)
+                if context["candidates"]:
+                    selected, approach, usage = model_client.teacher_decide(
+                        day=session.moment.time, teacher=actor,
+                        class_id=context["class_id"], candidates=context["candidates"])
+                    args = {"student_id": selected, "approach": approach,
+                            "provider": config.model_provider,
+                            "model": config.model_id, "prompt_version": TEACHER_PROMPT_VERSION,
+                            "usage": usage}
             result = await session.actions.invoke("campus.teacher_review",
-                Ref("campus", "teacher", actor), {})
+                Ref("campus", "teacher", actor), args)
             return DriverResult("completed", {"action": "teacher_review",
                 "status": result.status}, "rule")
         course = await session.information.read("/course")
