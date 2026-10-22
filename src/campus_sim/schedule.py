@@ -8,7 +8,7 @@ from society0.kernel.runtime import Phase
 from society0.kernel.schedule import SequenceSchedule, activate
 
 
-def campus_schedule_plugin(config, actor_ids, staff_ids):
+def campus_schedule_plugin(config, actor_ids, staff_ids, teacher_ids=()):
     def install(context):
         campus = context.require("campus", "campus")
         current = {}
@@ -21,6 +21,12 @@ def campus_schedule_plugin(config, actor_ids, staff_ids):
         async def staff_shift(phase):
             results = await activate(phase, staff_ids)
             return StepResult(metrics={"staff_shifts": len(results)}, tables={"staff_actions": (
+                {"actor": item.actor_id, **item.result.value} for item in results)})
+
+        async def teacher_review(phase):
+            results = await activate(phase, teacher_ids)
+            return StepResult(metrics={"teacher_reviews": len(results)},
+                              tables={"teacher_actions": (
                 {"actor": item.actor_id, **item.result.value} for item in results)})
 
         async def decide(phase):
@@ -59,5 +65,6 @@ def campus_schedule_plugin(config, actor_ids, staff_ids):
                      if config.periods_per_day == 3 else (Phase("decide", decide),))
         context.provide("schedule", SequenceSchedule(range(config.start, config.end + 1),
             (Phase("prepare", prepare), Phase("staff_shift", staff_shift),
+             *((Phase("teacher_review", teacher_review),) if teacher_ids else ()),
              *decisions, Phase("settle", settle))))
     return Plugin("schedule", ("campus", "runtime"), install)

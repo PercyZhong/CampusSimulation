@@ -24,6 +24,7 @@ from .domain import (
 )
 from .mechanism import campus_plugin
 from .models import DECISION_PROMPT_VERSION, DIALOGUE_PROMPT_VERSION, ModelClient
+from .population import CLASS_SIZE
 from .schedule import campus_schedule_plugin
 
 
@@ -39,6 +40,9 @@ def build(raw):
     config = Config.parse(raw)
     ids = tuple(f"s{i:03d}" for i in range(config.n_students))
     staff_ids = tuple(f"c{i:03d}" for i in range(config.n_staff))
+    teacher_ids = (tuple(f"t{i:03d}" for i in range(
+        (config.n_students + CLASS_SIZE - 1) // CLASS_SIZE))
+        if config.class_support_enabled else ())
     model_client = (ModelClient(config.model_provider, config.model_id, config.max_model_calls,
                                 config.model_temperature)
                     if config.driver == "llm" else None)
@@ -50,13 +54,22 @@ def build(raw):
                 Ref("campus", "staff", actor), {})
             return DriverResult("completed", {"action": "staff_shift",
                 "status": result.status}, "rule")
-        chunk = await session.information.read("/students/" + actor)
+        if actor in teacher_ids:
+            result = await session.actions.invoke("campus.teacher_review",
+                Ref("campus", "teacher", actor), {})
+            return DriverResult("completed", {"action": "teacher_review",
+                "status": result.status}, "rule")
         course = await session.information.read("/course")
         service = await session.information.read("/service")
         peers = await session.information.read("/peers/" + actor)
-        state = json.loads(chunk.data)
         service_data = json.loads(service.data)
         period = service_data["period"] if config.periods_per_day == 3 else None
+        if (config.class_support_enabled and int(actor[1:]) % CLASS_SIZE == 0
+                and period in (None, "morning")):
+            await session.actions.invoke("campus.committee_check_in",
+                Ref("campus", "student", actor), {})
+        chunk = await session.information.read("/students/" + actor)
+        state = json.loads(chunk.data)
         calendar = json.loads(course.data)
         if model_client is None:
             action = (period_action_choice(state, session.moment.time, period, config,
@@ -133,24 +146,28 @@ def build(raw):
             return False
         if target.kind in {"service", "course"}:
             return operation in {"discover", "read"}
-        return target.kind in {"student", "peer", "staff"} and target.key == scope.actor
+        return target.kind in {"student", "peer", "staff", "teacher"} and target.key == scope.actor
 
     plugins = [interaction_plugin(allows,
-               access_dependencies=("campus_students", "campus_staff")), results_plugin(),
+               access_dependencies=("campus_students", "campus_staff", "campus_teachers")),
+               results_plugin(),
                rule_driver_plugin(rule),
                actor_plugin({"rule": ("rule_driver", "factory")},
-                            records=[ActorRecord(actor, "rule") for actor in (*staff_ids, *ids)]),
+                            records=[ActorRecord(actor, "rule") for actor in
+                                     (*staff_ids, *teacher_ids, *ids)]),
                campus_plugin(config),
                runtime_plugin(actor_service=("actors", "actors"),
                               information=("interaction", "information"),
                               actions=("interaction", "actions"), store=("storage", "store"),
                               results=("results", "results"),
                               max_activations=config.n_students * config.periods_per_day +
-                              config.n_staff),
-               campus_schedule_plugin(config, ids, staff_ids)]
+                              config.n_staff + len(teacher_ids)),
+               campus_schedule_plugin(config, ids, staff_ids, teacher_ids)]
     public = asdict(config)
     if "periods_per_day" not in raw:
         public.pop("periods_per_day")
+    if "class_support_enabled" not in raw:
+        public.pop("class_support_enabled")
     public["release"] = raw.get("release", {"scenario": "0.6.0"})
     config_hash = hashlib.sha256(json.dumps(public, sort_keys=True,
                                 separators=(",", ":")).encode()).hexdigest()
@@ -158,11 +175,11 @@ def build(raw):
         release={"scenario": "0.6.0", "scenario_git": _git_sha(), "society0_git": SOCIETY0_SHA},
         dependencies={"python": sys.version.split()[0], "society0_git": SOCIETY0_SHA},
         configuration={"plugins": {"campus": public},
-                       "actors": [*staff_ids, *ids], "models": (
+                       "actors": [*staff_ids, *teacher_ids, *ids], "models": (
                            {config.model_provider: config.model_id} if model_client else {}),
                        "config_sha256": config_hash, "driver": config.driver},
         time={"start": config.start, "end": config.end, "unit": "day"},
         budgets={"max_activations": config.n_students * config.periods_per_day +
-                 config.n_staff,
+                 config.n_staff + len(teacher_ids),
                  "http_requests": config.max_model_calls,
                  "paid_model_calls": config.max_model_calls}))

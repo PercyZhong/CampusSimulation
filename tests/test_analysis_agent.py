@@ -62,6 +62,30 @@ def test_run_evidence_checks_daily_values_and_includes_contrasting_paths(tmp_pat
         run_evidence(path)
 
 
+def test_run_evidence_includes_class_role_examples(tmp_path):
+    path = tmp_path / "class-support"
+    summary = make_run(path)
+    summary.update(class_support_enabled=True, class_count=1, teacher_count=1,
+                   committee_count=1, academic_check_in_count=1,
+                   peer_support_offer_count=1, professional_referral_offer_count=1)
+    (path / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
+    events = [
+        {"actor": "t000", "day": 2, "action": "teacher_review", "status": "completed",
+         "detail": {"student_id": "s001"}},
+        {"actor": "s000", "day": 2, "action": "committee_check_in", "status": "completed",
+         "detail": {"student_id": "s001"}},
+        {"actor": "c000", "day": 2, "action": "professional_referral_offer",
+         "status": "offered", "detail": {"student_id": "s001"}},
+    ]
+    with (path / "events.jsonl").open("a", encoding="utf-8") as stream:
+        stream.writelines(json.dumps(event) + "\n" for event in events)
+    packet = run_evidence(path)
+    examples = [item for item in packet["evidence"]
+                if item["label"].endswith("实例")]
+    assert len(examples) == 3
+    assert all(item["value"]["student_id"] == "s001" for item in examples)
+
+
 def test_batch_evidence_requires_comparable_complete_pairs(tmp_path):
     batch = tmp_path / "batch-12345678"
     make_run(batch / "baseline-rule-seed11")

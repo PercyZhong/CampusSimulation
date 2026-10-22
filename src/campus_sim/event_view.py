@@ -17,11 +17,13 @@ def _validate_filters(day, action, actor, offset, limit):
         "attend", "rest", "peer", "request", "accept_support", "outreach_information",
         "staff_shift", "model_decision", "staff_follow_up", "course_absence",
         "peer_invitation", "peer_response", "peer_callback", "study_group",
-        "intervention_exposure", "scenario_trigger"
+        "intervention_exposure", "scenario_trigger", "teacher_review",
+        "academic_check_in", "committee_check_in", "peer_support_offer",
+        "professional_referral_offer", "referral_information"
     }:
         raise ValueError("unknown action")
     if actor is not None and (not isinstance(actor, str) or not actor or
-                              not (actor[0] in {"s", "c"} and actor[1:].isdigit())):
+                              not (actor[0] in {"s", "c", "t"} and actor[1:].isdigit())):
         raise ValueError("invalid actor")
 
 def read_events(run_dir, *, day=None, action=None, actor=None, offset=0, limit=50):
@@ -38,7 +40,10 @@ def read_events(run_dir, *, day=None, action=None, actor=None, offset=0, limit=5
                 continue
             if (actor is not None and event["actor"] != actor
                     and not (actor.startswith("c")
-                             and event.get("detail", {}).get("staff_id") == actor)):
+                             and event.get("detail", {}).get("staff_id") == actor)
+                    and not (actor.startswith("t")
+                             and event.get("detail", {}).get("teacher_id") == actor)
+                    and event.get("detail", {}).get("committee_id") != actor):
                 continue
             if offset <= total < offset + limit:
                 page.append(event)
@@ -63,13 +68,18 @@ def read_timeline(run_dir, *, day=None, action=None, actor=None, offset=0, limit
             subjects = set()
             source = event["actor"]
             if (isinstance(source, str) and len(source) > 1
-                    and source[0] in {"c", "s"} and source[1:].isdigit()):
+                    and source[0] in {"c", "t", "s"} and source[1:].isdigit()):
                 subjects.add(source)
             detail = event.get("detail") or {}
             staff = detail.get("staff_id") if isinstance(detail, dict) else None
             if (isinstance(staff, str) and len(staff) > 1
                     and staff[0] == "c" and staff[1:].isdigit()):
                 subjects.add(staff)
+            for key, prefix in (("teacher_id", "t"), ("committee_id", "s")):
+                related = detail.get(key) if isinstance(detail, dict) else None
+                if (isinstance(related, str) and len(related) > 1
+                        and related[0] == prefix and related[1:].isdigit()):
+                    subjects.add(related)
             for subject in subjects:
                 if actor is None or actor == subject:
                     grouped.setdefault((event["day"], subject), []).append(
@@ -77,7 +87,7 @@ def read_timeline(run_dir, *, day=None, action=None, actor=None, offset=0, limit
 
     def order(key):
         day_number, subject = key
-        return day_number, 0 if subject[0] == "c" else 1, int(subject[1:])
+        return day_number, {"c": 0, "t": 1, "s": 2}[subject[0]], int(subject[1:])
 
     keys = sorted(grouped, key=order)
     rows = [{"day": key[0], "actor": key[1],

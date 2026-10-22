@@ -28,11 +28,16 @@ from .domain import (
 )
 from .language import language_backend
 from .models import _dialogue
-from .population import make_population, make_staff
+from .population import make_population, make_staff, make_teachers
 
 SCHEMA = (
     "CREATE TABLE campus_students(id TEXT NOT NULL PRIMARY KEY, body TEXT NOT NULL)",
     "CREATE TABLE campus_staff(id TEXT NOT NULL PRIMARY KEY, body TEXT NOT NULL)",
+    "CREATE TABLE campus_teachers(id TEXT NOT NULL PRIMARY KEY, body TEXT NOT NULL)",
+    ("CREATE TABLE campus_teacher_reviews(day INTEGER NOT NULL,actor TEXT NOT NULL,"
+     "PRIMARY KEY(day,actor))"),
+    ("CREATE TABLE campus_committee_contacts(day INTEGER NOT NULL,actor TEXT NOT NULL,"
+     "PRIMARY KEY(day,actor))"),
     ("CREATE TABLE campus_staff_shifts(day INTEGER NOT NULL,actor TEXT NOT NULL,"
      "slots INTEGER NOT NULL,PRIMARY KEY(day,actor))"),
     "CREATE TABLE campus_edges(a TEXT NOT NULL,b TEXT NOT NULL,PRIMARY KEY(a,b))",
@@ -140,6 +145,98 @@ class Campus:
             writer.execute("INSERT INTO campus_staff_shifts VALUES(?,?,?)", (day, actor, slots))
             self.event(writer, day, actor, "staff_shift", "completed", detail={"slots": slots})
             return {"status": "completed", "slots": slots}
+
+        result = self.store.transaction(write)
+        return ActionResult(result["status"], result)
+
+    def teacher_review(self, scope, target):
+        """Review observable attendance; offer one academic check-in per class and day."""
+        day, actor = scope.moment.time, scope.actor
+        if target.key != actor or not self.config.class_support_enabled:
+            return ActionResult("rejected", {"reason": "wrong_actor_or_disabled"})
+
+        def write(writer):
+            rows = writer.query("SELECT body FROM campus_teachers WHERE id=?", (actor,), max_rows=1)
+            if not rows:
+                return {"status": "rejected", "reason": "unknown_teacher"}
+            if writer.query("SELECT 1 FROM campus_teacher_reviews WHERE day=? AND actor=?",
+                            (day, actor), max_rows=1):
+                return {"status": "rejected", "reason": "already_reviewed_today"}
+            class_id = json.loads(rows[0][0])["class_id"]
+            classmates = []
+            for body, in writer.iter_query("SELECT body FROM campus_students ORDER BY id"):
+                student = json.loads(body)
+                if student["class_id"] == class_id:
+                    classmates.append(student)
+            candidates = sorted((student for student in classmates
+                                 if student["missed_course_streak"] >= 2 and writer.query(
+                                     "SELECT 1 FROM campus_events WHERE day=? AND actor=? "
+                                     "AND action='course_absence'", (day - 1, student["id"]),
+                                     max_rows=1)),
+                                key=lambda student: (-student["missed_course_streak"], student["id"]))
+            student = candidates[0] if candidates else None
+            writer.execute("INSERT INTO campus_teacher_reviews VALUES(?,?)", (day, actor))
+            detail = {"class_id": class_id, "student_id": student["id"] if student else None,
+                      "basis": "observed_course_absence_streak"}
+            self.event(writer, day, actor, "teacher_review", "completed", detail=detail)
+            if student:
+                student["academic_engagement"] = clamp(student["academic_engagement"] + 0.015)
+                writer.execute("UPDATE campus_students SET body=? WHERE id=?",
+                               (dumps(student), student["id"]))
+                self.event(writer, day, student["id"], "academic_check_in", "completed",
+                           detail={"teacher_id": actor, "class_id": class_id,
+                                   "basis": detail["basis"]})
+            return {"status": "completed", "student_id": detail["student_id"]}
+
+        result = self.store.transaction(write)
+        return ActionResult(result["status"], result)
+
+    def committee_check_in(self, scope, target):
+        """A student committee member offers peer contact using prior attendance only."""
+        day, actor = scope.moment.time, scope.actor
+        if target.key != actor or not self.config.class_support_enabled:
+            return ActionResult("rejected", {"reason": "wrong_actor_or_disabled"})
+
+        def write(writer):
+            rows = writer.query("SELECT body FROM campus_students WHERE id=?", (actor,), max_rows=1)
+            if not rows or not (member := json.loads(rows[0][0]))["class_committee"]:
+                return {"status": "rejected", "reason": "not_committee_member"}
+            if writer.query("SELECT 1 FROM campus_committee_contacts WHERE day=? AND actor=?",
+                            (day, actor), max_rows=1):
+                return {"status": "rejected", "reason": "already_contacted_today"}
+            candidates = []
+            classmates = list(writer.iter_query("SELECT body FROM campus_students ORDER BY id"))
+            for body, in classmates:
+                student = json.loads(body)
+                if (student["class_id"] == member["class_id"] and student["id"] != actor
+                        and writer.query(
+                            "SELECT 1 FROM campus_events WHERE day=? AND actor=? "
+                            "AND action='course_absence'", (day - 1, student["id"]),
+                            max_rows=1)):
+                    candidates.append(student)
+            candidates = [student for student in candidates if not writer.query(
+                "SELECT 1 FROM campus_events WHERE day=? AND actor=? AND action='academic_check_in'",
+                (day, student["id"]), max_rows=1)]
+            student = candidates[0] if candidates else None
+            writer.execute("INSERT INTO campus_committee_contacts VALUES(?,?)", (day, actor))
+            detail = {"class_id": member["class_id"],
+                      "student_id": student["id"] if student else None,
+                      "basis": "observed_prior_course_absence",
+                      **({"period": "morning"} if self.config.periods_per_day == 3 else {})}
+            self.event(writer, day, actor, "committee_check_in", "completed", detail=detail)
+            if student:
+                accepted = unit(self.config.seed, "committee_accept", day, actor,
+                                student["id"]) < 0.5
+                if accepted:
+                    student["connection"] = clamp(student["connection"] + 0.02)
+                    writer.execute("UPDATE campus_students SET body=? WHERE id=?",
+                                   (dumps(student), student["id"]))
+                self.event(writer, day, student["id"], "peer_support_offer",
+                           "accepted" if accepted else "declined",
+                           detail={"committee_id": actor, "class_id": member["class_id"],
+                                   **({"period": "morning"}
+                                      if self.config.periods_per_day == 3 else {})})
+            return {"status": "completed", "student_id": detail["student_id"]}
 
         result = self.store.transaction(write)
         return ActionResult(result["status"], result)
@@ -540,7 +637,9 @@ class Campus:
                 if classmates:
                     classmate = classmates[int(unit(self.config.seed, "classmate", day, actor)
                                               * len(classmates))]
-            detail = ({"wait_days": wait, "staff_id": assigned_staff}
+            detail = ({"wait_days": wait, "staff_id": assigned_staff,
+                       **({"service_kind": "nonclinical_student_advising"}
+                          if self.config.class_support_enabled else {})}
                       if action == "accept_support" else
                       {"partner": partner,
                        "turns": turns if self.config.driver == "llm" else
@@ -641,6 +740,18 @@ class Campus:
             detail["feedback"] = feedback
             self.event(writer, day, actor, action, "completed",
                        detail=detail)
+            if (self.config.class_support_enabled and action == "accept_support"
+                    and (wait >= 3 or state["missed_course_streak"] >= 2)):
+                referral = {"student_id": actor, "staff_id": assigned_staff,
+                            "service": "professional_counseling",
+                            "basis": ("long_wait_and_observed_absence" if wait >= 3
+                                      and state["missed_course_streak"] >= 2 else
+                                      "long_wait" if wait >= 3 else "observed_absence"),
+                            "outcome": "information_offered_only"}
+                self.event(writer, day, assigned_staff, "professional_referral_offer",
+                           "offered", detail=referral)
+                self.event(writer, day, actor, "referral_information", "received",
+                           detail=referral)
             if group_detail is not None:
                 self.event(writer, day, actor, "study_group", "completed",
                            detail=group_detail)
@@ -842,7 +953,10 @@ class CampusInformation:
             data = self.campus.store.read(partner_context)
         elif ref.kind == "student":
             state = self.campus.student(ref.key)
-            data = {key: state[key] for key in ("id", "stress", "mood", "recovery", "connection", "willingness",
+            fields = (("class_id", "class_committee")
+                      if self.campus.config.class_support_enabled else ())
+            data = {key: state[key] for key in ("id", *fields,
+                                                  "stress", "mood", "recovery", "connection", "willingness",
                                                   "academic_engagement", "self_efficacy", "belonging",
                                                   "help_seeking_belief", "social_avoidance",
                                                   "missed_course_streak",
@@ -905,11 +1019,15 @@ class CampusInformation:
 def campus_plugin(config):
     population, edges = make_population(config)
     staff = make_staff(config)
+    teachers = make_teachers(config) if config.class_support_enabled else []
     def initialize(writer):
         for state in population:
             writer.execute("INSERT INTO campus_students VALUES(?,?)", (state["id"], dumps(state)))
         for member in staff:
             writer.execute("INSERT INTO campus_staff VALUES(?,?)", (member["id"], dumps(member)))
+        for teacher in teachers:
+            writer.execute("INSERT INTO campus_teachers VALUES(?,?)",
+                           (teacher["id"], dumps(teacher)))
         for a, b in edges:
             writer.execute("INSERT OR IGNORE INTO campus_edges VALUES(?,?)", (a, b))
             left, right = sorted((a, b))
@@ -944,6 +1062,17 @@ def campus_plugin(config):
             lambda scope, target, args: campus.staff_shift(scope, target),
             available=lambda scope, target: target.key == scope.actor),
             dependencies=("campus_staff", "campus_staff_shifts"))
+        actions.register(Action("campus.teacher_review", ("campus", "teacher"),
+            "teacher_review", schema,
+            lambda scope, target, args: campus.teacher_review(scope, target),
+            available=lambda scope, target: target.key == scope.actor),
+            dependencies=("campus_teachers", "campus_teacher_reviews", "campus_students",
+                          "campus_events"))
+        actions.register(Action("campus.committee_check_in", ("campus", "student"),
+            "committee_check_in", schema,
+            lambda scope, target, args: campus.committee_check_in(scope, target),
+            available=lambda scope, target: target.key == scope.actor),
+            dependencies=("campus_students", "campus_committee_contacts", "campus_events"))
         decision_schema = {"type": "object", "properties": {
             "action": {"type": "string"}, "provider": {"type": "string"},
             "model": {"type": "string"}, "temperature": {"type": "number"},

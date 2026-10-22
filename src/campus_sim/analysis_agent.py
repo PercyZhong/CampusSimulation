@@ -18,6 +18,9 @@ METRICS = {
     "completed_wait_mean_days": "已完成服务的平均等待天数",
     "mean_stress": "末日平均压力",
     "mean_mood": "末日平均心情",
+    "academic_check_in_count": "教师学业关怀次数",
+    "peer_support_offer_count": "心理委员支持邀请次数",
+    "professional_referral_offer_count": "专业咨询信息转介次数",
 }
 PROSE_NUMBER = re.compile(r"\d")
 
@@ -49,6 +52,9 @@ def _run_metrics(summary):
         "completed_wait_mean_days": summary["completed_wait_mean_days"],
         "mean_stress": summary["stress_distribution"]["mean"],
         "mean_mood": summary.get("mood_distribution", {}).get("mean"),
+        "academic_check_in_count": summary.get("academic_check_in_count", 0),
+        "peer_support_offer_count": summary.get("peer_support_offer_count", 0),
+        "professional_referral_offer_count": summary.get("professional_referral_offer_count", 0),
     }
 
 
@@ -77,7 +83,9 @@ def _trajectories(path, steps, items):
             event = json.loads(line)
             if event["actor"].startswith("s") and event["action"] in {
                 "student_state", "attend", "course_absence", "peer", "request",
-                "accept_support", "peer_response", "outreach_information"
+                "accept_support", "peer_response", "outreach_information",
+                "academic_check_in", "peer_support_offer", "referral_information",
+                "committee_check_in"
             }:
                 by_actor[event["actor"]].append(event)
     profiles_path = path / "trajectory_profiles.jsonl"
@@ -123,6 +131,29 @@ def _trajectories(path, steps, items):
         _evidence(items, f"学生 {actor} 的轨迹片段", detail, "trajectory_profiles.jsonl + events.jsonl")
 
 
+def _role_examples(path, items):
+    labels = {"teacher_review": "教师学业关怀实例",
+              "committee_check_in": "心理委员支持实例",
+              "professional_referral_offer": "专业咨询信息转介实例"}
+    selected = set()
+    with (path / "events.jsonl").open(encoding="utf-8") as stream:
+        for line in stream:
+            event = json.loads(line)
+            action = event["action"]
+            if action not in labels or action in selected:
+                continue
+            target = event.get("detail", {}).get("student_id")
+            if target is None:
+                continue
+            _evidence(items, labels[action], {"day": event["day"],
+                       "actor": event["actor"], "student_id": target,
+                       "status": event["status"], "detail": event["detail"]},
+                      "events.jsonl")
+            selected.add(action)
+            if len(selected) == len(labels):
+                break
+
+
 def run_evidence(path):
     path = Path(path)
     summary = _complete_run(path)
@@ -160,10 +191,14 @@ def run_evidence(path):
     _evidence(items, "轨迹分型人数", summary["trajectory_profiles"]["trajectory_type_counts"],
               "summary.json")
     _trajectories(path, steps, items)
+    if summary.get("class_support_enabled"):
+        _role_examples(path, items)
     return {"kind": "run", "name": path.name, "metadata": {
         key: summary.get(key) for key in ("condition", "seed", "driver", "model_provider",
                                           "model_id", "scenario_git", "config_sha256",
-                                          "n_students", "n_staff", "complete_steps")},
+                                          "n_students", "n_staff", "complete_steps",
+                                          "class_support_enabled", "class_count",
+                                          "teacher_count", "committee_count")},
         "evidence": items}
 
 
@@ -184,11 +219,14 @@ def batch_evidence(path, plan_path):
             raise ValueError("batch run observation window mismatch")
         if (summary["n_students"] != config["n_students"]
                 or summary["n_staff"] != config["n_staff"]
-                or summary.get("driver", "rule") != config.get("driver", "rule")):
+                or summary.get("driver", "rule") != config.get("driver", "rule")
+                or summary.get("class_support_enabled", False)
+                != config.get("class_support_enabled", False)):
             raise ValueError("batch summary disagrees with planned configuration")
         comparable = {key: config.get(key) for key in ("n_students", "n_staff", "end",
                       "capacity", "open_every", "access_barrier", "outreach_day",
-                      "periods_per_day", "driver", "model_provider", "model_id")}
+                      "periods_per_day", "driver", "model_provider", "model_id",
+                      "class_support_enabled")}
         comparable["scenario_git"] = summary.get("scenario_git")
         if base is None:
             base = comparable
@@ -279,6 +317,7 @@ def generate_report(packet, provider, model, *, api_key=None):
               "每项 evidence_ids 必须引用证据包中的 ID。不得自行计算、填写阿拉伯数字、百分比或日期；"
               "数值由程序附在证据卡中。没有直接证据的推测保留为空 evidence_ids，标为假设。"
               "不要诊断学生，也不要把模拟差异写成真实学校的因果效果。")
+    system += "专业咨询转介只表示提供信息，不能写成已接受专业咨询或治疗。"
     content, usage = client._request(system, json.dumps(packet, ensure_ascii=False), 3500)
     draft = _json_object_prefix(content)
     if not isinstance(draft, dict):

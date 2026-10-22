@@ -8,6 +8,8 @@ from pathlib import Path
 
 from society0.kernel.observation import Observation
 
+from .domain import CLASS_SIZE
+
 SCHEMA_VERSION = 1
 ACTION_NAMES = ("attend", "rest", "peer", "request", "accept_support")
 
@@ -81,6 +83,21 @@ def interaction_records(events):
                                              event["actor"]],
                             "venue": None, "response": "not_recorded",
                             "outcome": "completed"})
+        elif action == "academic_check_in" and event["status"] == "completed":
+            records.append({**common, "kind": "academic_check_in",
+                            "participants": [detail["teacher_id"], event["actor"]],
+                            "venue": None, "response": "not_recorded",
+                            "outcome": "completed"})
+        elif action == "peer_support_offer":
+            records.append({**common, "kind": "peer_support_offer",
+                            "participants": [detail["committee_id"], event["actor"]],
+                            "venue": None, "response": event["status"],
+                            "outcome": "offered"})
+        elif action == "professional_referral_offer":
+            records.append({**common, "kind": "professional_referral_information",
+                            "participants": [event["actor"], detail["student_id"]],
+                            "venue": None, "response": "not_recorded",
+                            "outcome": "information_offered_only"})
     return records
 
 
@@ -521,6 +538,20 @@ def summarize(run_dir):
     status, days, events, students, staff = _read(run_dir)
     manifest = json.loads((run_dir / "runner.json").read_text(encoding="utf-8"))
     n = len(students)
+    role_enabled = manifest["contract"]["configuration"]["plugins"]["campus"].get(
+        "class_support_enabled", False)
+    classes = {student.get("class_id") for student in students if student.get("class_id")}
+    if role_enabled and (len(classes) != (n + CLASS_SIZE - 1) // CLASS_SIZE
+                         or sum(student.get("class_committee", False) for student in students)
+                         != len(classes)):
+        raise ValueError("class assignments require one committee member per class")
+    class_roster = ([{"class_id": group, "teacher_id": "t" + group.removeprefix("class-"),
+                     "committee_id": next(student["id"] for student in students
+                                          if student["class_id"] == group
+                                          and student["class_committee"]),
+                     "students": [student["id"] for student in students
+                                  if student["class_id"] == group]}
+                    for group in sorted(classes)] if role_enabled else [])
     waits = [e["detail"]["wait_days"] for e in events if e["action"] == "accept_support" and e["status"] == "completed"]
     pending = sum(s["pending_day"] is not None for s in students)
     groups = {}
@@ -640,6 +671,21 @@ def summarize(run_dir):
                "condition": manifest["contract"]["configuration"]["plugins"]["campus"]["condition"],
                "seed": manifest["contract"]["configuration"]["plugins"]["campus"]["seed"],
                "n_students": n, "n_staff": len(staff),
+               "class_support_enabled": role_enabled,
+               "class_size": CLASS_SIZE, "class_count": len(classes),
+               "class_roster": class_roster,
+               "teacher_count": len(classes) if role_enabled else 0,
+               "committee_count": (sum(student.get("class_committee", False)
+                                       for student in students) if role_enabled else 0),
+               "academic_check_in_count": sum(e["action"] == "academic_check_in"
+                                              for e in events),
+               "peer_support_offer_count": sum(e["action"] == "peer_support_offer"
+                                               for e in events),
+               "peer_support_accepted_count": sum(e["action"] == "peer_support_offer"
+                                                  and e["status"] == "accepted"
+                                                  for e in events),
+               "professional_referral_offer_count": sum(
+                   e["action"] == "professional_referral_offer" for e in events),
                "requested_count": sum(s["ever_requested"] for s in students),
                "requested_denominator": n, "supported_count": sum(s["ever_supported"] for s in students),
                "supported_denominator": n, "completed_wait_count": len(waits),

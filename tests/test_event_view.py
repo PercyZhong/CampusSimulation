@@ -124,3 +124,21 @@ def test_timeline_attributes_service_to_staff_and_filters_whole_daily_rows(tmp_p
     assert read_timeline(tmp_path, action="accept_support")["total"] == 2
     with pytest.raises(ValueError, match="limit"):
         read_timeline(tmp_path, limit=101)
+
+
+def test_timeline_places_teacher_between_adviser_and_students(tmp_path):
+    events = [
+        {"day": 1, "ordinal": 1, "actor": "t000", "action": "teacher_review",
+         "status": "completed", "detail": {}},
+        {"day": 1, "ordinal": 2, "actor": "s001", "action": "academic_check_in",
+         "status": "completed", "detail": {"teacher_id": "t000"}},
+        {"day": 1, "ordinal": 3, "actor": "s000", "action": "committee_check_in",
+         "status": "completed", "detail": {}},
+        {"day": 1, "ordinal": 4, "actor": "c000", "action": "staff_shift",
+         "status": "completed", "detail": {}},
+    ]
+    (tmp_path / "events.jsonl").write_text(
+        "".join(json.dumps(event) + "\n" for event in events), encoding="utf-8")
+    rows = read_timeline(tmp_path)["rows"]
+    assert [row["actor"] for row in rows] == ["c000", "t000", "s000", "s001"]
+    assert len(read_events(tmp_path, actor="t000")["events"]) == 2

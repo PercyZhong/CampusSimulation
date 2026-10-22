@@ -9,6 +9,34 @@ import pytest
 pytestmark = pytest.mark.skipif(sys.platform != "linux", reason="Society0 POSIX run contract")
 
 
+def test_class_roles_join_schedule_and_export_without_extra_students(tmp_path):
+    import asyncio
+
+    from society0.kernel.runner import run_plan
+
+    from campus_sim.analysis import export
+    from campus_sim.plan import build
+
+    raw = json.loads(Path("configs/class_support_baseline.json").read_text(encoding="utf-8"))
+    raw.update(end=3, n_students=6)
+    path = tmp_path / "class-roles"
+    asyncio.run(run_plan(path, build(raw)))
+    summary = export(path)
+    events = [json.loads(line) for line in
+              (path / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert summary["n_students"] == 6
+    assert (summary["class_count"], summary["teacher_count"],
+            summary["committee_count"]) == (2, 2, 2)
+    assert summary["class_roster"] == [
+        {"class_id": "class-000", "teacher_id": "t000", "committee_id": "s000",
+         "students": ["s000", "s001", "s002", "s003", "s004"]},
+        {"class_id": "class-001", "teacher_id": "t001", "committee_id": "s005",
+         "students": ["s005"]},
+    ]
+    assert sum(event["action"] == "teacher_review" for event in events) == 6
+    assert sum(event["action"] == "committee_check_in" for event in events) == 6
+
+
 def test_two_day_completed_action_and_export(tmp_path):
     import asyncio
 

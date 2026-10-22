@@ -4,6 +4,8 @@ import hashlib
 import json
 from dataclasses import dataclass, field
 
+CLASS_SIZE = 5
+
 
 @dataclass(frozen=True)
 class Config:
@@ -17,6 +19,7 @@ class Config:
     access_barrier: float = 0.22
     outreach_day: int = 5
     n_staff: int = 2
+    class_support_enabled: bool = False
     language_backend: str = "offline"
     driver: str = "rule"
     model_provider: str | None = None
@@ -41,6 +44,8 @@ class Config:
             raise ValueError("invalid service settings")
         if value.n_staff < 1 or value.capacity > value.n_staff * 3:
             raise ValueError("capacity exceeds configured staff slots")
+        if type(value.class_support_enabled) is not bool:
+            raise TypeError("class_support_enabled must be boolean")
         if type(value.periods_per_day) is not int or value.periods_per_day not in (1, 3):
             raise ValueError("periods_per_day must be 1 or 3")
         if value.language_backend not in {"offline"}:
@@ -331,7 +336,7 @@ def academic_event(seed, day):
 
 def academic_context(seed, day, student_id):
     """Five-student cohorts share a daily course and place."""
-    cohort = int(student_id[1:]) // 5
+    cohort = int(student_id[1:]) // CLASS_SIZE
     course = 100 + cohort * 4 + (day - 1) % 4
     venue = 1 + int(unit(seed, "course_venue", course) * 6)
     return {"course_id": f"course-{course}", "venue": f"building-{venue}",
@@ -362,7 +367,7 @@ def residence_context(student_id):
 
 def club_context(student_id):
     """Stable synthetic student club membership and meeting place."""
-    club = int(student_id[1:]) // 5
+    club = int(student_id[1:]) // CLASS_SIZE
     return {"club_id": f"club-{club:02d}", "venue": f"student_center-{club % 4:02d}"}
 
 

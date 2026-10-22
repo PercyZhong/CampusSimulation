@@ -1,0 +1,20 @@
+{
+  "start": 1,
+  "end": 30,
+  "n_students": 40,
+  "seed": 11,
+  "condition": "baseline",
+  "capacity": 3,
+  "open_every": 1,
+  "access_barrier": 0.22,
+  "outreach_day": 5,
+  "n_staff": 2,
+  "class_support_enabled": true,
+  "language_backend": "offline",
+  "policy_components": {
+    "information_delivery": {"enabled": false, "day": 5},
+    "access": {"barrier_multiplier": 1.0},
+    "service": {"capacity": 3, "open_every": 1}
+  },
+  "release": {"scenario": "0.6.0"}
+}
