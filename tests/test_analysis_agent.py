@@ -65,7 +65,7 @@ def test_run_evidence_checks_daily_values_and_includes_contrasting_paths(tmp_pat
 def test_run_evidence_includes_class_role_examples(tmp_path):
     path = tmp_path / "class-support"
     summary = make_run(path)
-    summary.update(class_support_enabled=True, class_count=1, teacher_count=1,
+    summary.update(class_count=1, teacher_count=1,
                    committee_count=1, academic_check_in_count=1,
                    peer_support_offer_count=1, professional_referral_offer_count=1)
     (path / "summary.json").write_text(json.dumps(summary), encoding="utf-8")

@@ -1,11 +1,13 @@
 """Class identity stays deterministic without adding duplicate student actors."""
 
+import pytest
+
 from campus_sim.domain import Config
 from campus_sim.population import make_population, make_staff, make_teachers
 
 
 def test_classes_have_one_student_committee_member_and_teacher():
-    config = Config(n_students=12, class_support_enabled=True)
+    config = Config(n_students=12)
     students, _ = make_population(config)
     teachers = make_teachers(config)
     assert [teacher["class_id"] for teacher in teachers] == [
@@ -17,9 +19,16 @@ def test_classes_have_one_student_committee_member_and_teacher():
     assert all(staff["role"] == "student_adviser" for staff in make_staff(config))
 
 
-def test_legacy_population_keeps_class_fields_out_of_student_state():
+def test_default_population_always_has_class_roles():
     config = Config(n_students=6)
     students, _ = make_population(config)
-    assert all("class_id" not in student and "class_committee" not in student
-               for student in students)
-    assert all(staff["role"] == "counselor" for staff in make_staff(config))
+    assert [student["id"] for student in students if student["class_committee"]] == [
+        "s000", "s005"]
+    assert all("class_id" in student for student in students)
+    assert all(staff["role"] == "student_adviser" for staff in make_staff(config))
+
+
+def test_old_true_flag_is_accepted_but_disabling_roles_is_rejected():
+    assert Config.parse({"class_support_enabled": True}) == Config()
+    with pytest.raises(ValueError, match="class support is required"):
+        Config.parse({"class_support_enabled": False})

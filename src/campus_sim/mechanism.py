@@ -152,8 +152,8 @@ class Campus:
     def teacher_review(self, scope, target):
         """Review observable attendance; offer one academic check-in per class and day."""
         day, actor = scope.moment.time, scope.actor
-        if target.key != actor or not self.config.class_support_enabled:
-            return ActionResult("rejected", {"reason": "wrong_actor_or_disabled"})
+        if target.key != actor:
+            return ActionResult("rejected", {"reason": "wrong_actor"})
 
         def write(writer):
             rows = writer.query("SELECT body FROM campus_teachers WHERE id=?", (actor,), max_rows=1)
@@ -194,8 +194,8 @@ class Campus:
     def committee_check_in(self, scope, target):
         """A student committee member offers peer contact using prior attendance only."""
         day, actor = scope.moment.time, scope.actor
-        if target.key != actor or not self.config.class_support_enabled:
-            return ActionResult("rejected", {"reason": "wrong_actor_or_disabled"})
+        if target.key != actor:
+            return ActionResult("rejected", {"reason": "wrong_actor"})
 
         def write(writer):
             rows = writer.query("SELECT body FROM campus_students WHERE id=?", (actor,), max_rows=1)
@@ -638,8 +638,7 @@ class Campus:
                     classmate = classmates[int(unit(self.config.seed, "classmate", day, actor)
                                               * len(classmates))]
             detail = ({"wait_days": wait, "staff_id": assigned_staff,
-                       **({"service_kind": "nonclinical_student_advising"}
-                          if self.config.class_support_enabled else {})}
+                       "service_kind": "nonclinical_student_advising"}
                       if action == "accept_support" else
                       {"partner": partner,
                        "turns": turns if self.config.driver == "llm" else
@@ -740,7 +739,7 @@ class Campus:
             detail["feedback"] = feedback
             self.event(writer, day, actor, action, "completed",
                        detail=detail)
-            if (self.config.class_support_enabled and action == "accept_support"
+            if (action == "accept_support"
                     and (wait >= 3 or state["missed_course_streak"] >= 2)):
                 referral = {"student_id": actor, "staff_id": assigned_staff,
                             "service": "professional_counseling",
@@ -953,9 +952,7 @@ class CampusInformation:
             data = self.campus.store.read(partner_context)
         elif ref.kind == "student":
             state = self.campus.student(ref.key)
-            fields = (("class_id", "class_committee")
-                      if self.campus.config.class_support_enabled else ())
-            data = {key: state[key] for key in ("id", *fields,
+            data = {key: state[key] for key in ("id", "class_id", "class_committee",
                                                   "stress", "mood", "recovery", "connection", "willingness",
                                                   "academic_engagement", "self_efficacy", "belonging",
                                                   "help_seeking_belief", "social_avoidance",
@@ -1019,7 +1016,7 @@ class CampusInformation:
 def campus_plugin(config):
     population, edges = make_population(config)
     staff = make_staff(config)
-    teachers = make_teachers(config) if config.class_support_enabled else []
+    teachers = make_teachers(config)
     def initialize(writer):
         for state in population:
             writer.execute("INSERT INTO campus_students VALUES(?,?)", (state["id"], dumps(state)))

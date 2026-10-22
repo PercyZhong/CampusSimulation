@@ -19,7 +19,6 @@ class Config:
     access_barrier: float = 0.22
     outreach_day: int = 5
     n_staff: int = 2
-    class_support_enabled: bool = False
     language_backend: str = "offline"
     driver: str = "rule"
     model_provider: str | None = None
@@ -31,9 +30,11 @@ class Config:
 
     @classmethod
     def parse(cls, raw):
-        allowed = set(cls.__dataclass_fields__) | {"release"}
+        allowed = set(cls.__dataclass_fields__) | {"release", "class_support_enabled"}
         if set(raw) - allowed:
             raise ValueError(f"unknown config keys: {sorted(set(raw) - allowed)}")
+        if "class_support_enabled" in raw and raw["class_support_enabled"] is not True:
+            raise ValueError("class support is required for every run")
         value = cls(**{key: raw[key] for key in cls.__dataclass_fields__ if key in raw})
         for key in ("start", "end", "n_students", "seed", "capacity", "open_every", "outreach_day", "n_staff"):
             if type(getattr(value, key)) is not int:
@@ -44,8 +45,6 @@ class Config:
             raise ValueError("invalid service settings")
         if value.n_staff < 1 or value.capacity > value.n_staff * 3:
             raise ValueError("capacity exceeds configured staff slots")
-        if type(value.class_support_enabled) is not bool:
-            raise TypeError("class_support_enabled must be boolean")
         if type(value.periods_per_day) is not int or value.periods_per_day not in (1, 3):
             raise ValueError("periods_per_day must be 1 or 3")
         if value.language_backend not in {"offline"}:

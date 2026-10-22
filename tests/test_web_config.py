@@ -36,13 +36,12 @@ def test_web_config_combines_template_and_bounded_controls():
     assert config["policy_components"]["service"] == {"capacity": 6, "open_every": 2}
     assert config["policy_components"]["information_delivery"]["day"] == 4
     assert config["periods_per_day"] == 3
-    assert build_run_config(PROJECT, payload(class_support_enabled=True))[
-        "class_support_enabled"] is True
+    assert "class_support_enabled" not in config
 
 
-def test_web_config_requires_boolean_class_support_switch():
-    with pytest.raises(TypeError, match="class_support_enabled"):
-        build_run_config(PROJECT, payload(class_support_enabled="true"))
+def test_web_config_cannot_disable_class_support():
+    with pytest.raises(ValueError, match="class support is required"):
+        build_run_config(PROJECT, payload(class_support_enabled=False))
 
 
 @pytest.mark.parametrize("change", [

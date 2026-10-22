@@ -40,9 +40,8 @@ def build(raw):
     config = Config.parse(raw)
     ids = tuple(f"s{i:03d}" for i in range(config.n_students))
     staff_ids = tuple(f"c{i:03d}" for i in range(config.n_staff))
-    teacher_ids = (tuple(f"t{i:03d}" for i in range(
+    teacher_ids = tuple(f"t{i:03d}" for i in range(
         (config.n_students + CLASS_SIZE - 1) // CLASS_SIZE))
-        if config.class_support_enabled else ())
     model_client = (ModelClient(config.model_provider, config.model_id, config.max_model_calls,
                                 config.model_temperature)
                     if config.driver == "llm" else None)
@@ -64,8 +63,7 @@ def build(raw):
         peers = await session.information.read("/peers/" + actor)
         service_data = json.loads(service.data)
         period = service_data["period"] if config.periods_per_day == 3 else None
-        if (config.class_support_enabled and int(actor[1:]) % CLASS_SIZE == 0
-                and period in (None, "morning")):
+        if int(actor[1:]) % CLASS_SIZE == 0 and period in (None, "morning"):
             await session.actions.invoke("campus.committee_check_in",
                 Ref("campus", "student", actor), {})
         chunk = await session.information.read("/students/" + actor)
@@ -166,8 +164,6 @@ def build(raw):
     public = asdict(config)
     if "periods_per_day" not in raw:
         public.pop("periods_per_day")
-    if "class_support_enabled" not in raw:
-        public.pop("class_support_enabled")
     public["release"] = raw.get("release", {"scenario": "0.6.0"})
     config_hash = hashlib.sha256(json.dumps(public, sort_keys=True,
                                 separators=(",", ":")).encode()).hexdigest()

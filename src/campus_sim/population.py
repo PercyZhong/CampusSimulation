@@ -27,10 +27,8 @@ def make_population(config):
         sid = f"s{number:03d}"
         connection = round(0.2 + 0.55 * unit(config.seed, "connection", sid), 6)
         stress = round(0.25 + 0.4 * unit(config.seed, "stress", sid), 6)
-        rows.append({"id": sid,
-                     **({"class_id": class_id(sid),
-                         "class_committee": sid == committee_id(class_number(sid))}
-                        if config.class_support_enabled else {}),
+        rows.append({"id": sid, "class_id": class_id(sid),
+                     "class_committee": sid == committee_id(class_number(sid)),
                      "stress": stress,
                      "initial_stress": stress,
                      "mood": round(0.3 + 0.4 * unit(config.seed, "mood", sid), 6),
@@ -61,6 +59,5 @@ def make_population(config):
 
 def make_staff(config):
     """Nonclinical student advisers own support slots and can suggest referrals."""
-    role = "student_adviser" if config.class_support_enabled else "counselor"
-    return [{"id": f"c{i:03d}", "role": role, "slots_per_day": 3}
+    return [{"id": f"c{i:03d}", "role": "student_adviser", "slots_per_day": 3}
             for i in range(config.n_staff)]

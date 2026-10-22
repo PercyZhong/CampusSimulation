@@ -8,7 +8,7 @@ from society0.kernel.runtime import Phase
 from society0.kernel.schedule import SequenceSchedule, activate
 
 
-def campus_schedule_plugin(config, actor_ids, staff_ids, teacher_ids=()):
+def campus_schedule_plugin(config, actor_ids, staff_ids, teacher_ids):
     def install(context):
         campus = context.require("campus", "campus")
         current = {}
@@ -65,6 +65,6 @@ def campus_schedule_plugin(config, actor_ids, staff_ids, teacher_ids=()):
                      if config.periods_per_day == 3 else (Phase("decide", decide),))
         context.provide("schedule", SequenceSchedule(range(config.start, config.end + 1),
             (Phase("prepare", prepare), Phase("staff_shift", staff_shift),
-             *((Phase("teacher_review", teacher_review),) if teacher_ids else ()),
+             Phase("teacher_review", teacher_review),
              *decisions, Phase("settle", settle))))
     return Plugin("schedule", ("campus", "runtime"), install)

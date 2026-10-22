@@ -9,7 +9,6 @@
   "access_barrier": 0.22,
   "outreach_day": 5,
   "n_staff": 2,
-  "class_support_enabled": true,
   "language_backend": "offline",
   "policy_components": {
     "information_delivery": {"enabled": false, "day": 5},

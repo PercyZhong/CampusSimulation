@@ -191,14 +191,14 @@ def run_evidence(path):
     _evidence(items, "轨迹分型人数", summary["trajectory_profiles"]["trajectory_type_counts"],
               "summary.json")
     _trajectories(path, steps, items)
-    if summary.get("class_support_enabled"):
+    if summary.get("teacher_count", 0):
         _role_examples(path, items)
     return {"kind": "run", "name": path.name, "metadata": {
         key: summary.get(key) for key in ("condition", "seed", "driver", "model_provider",
                                           "model_id", "scenario_git", "config_sha256",
                                           "n_students", "n_staff", "complete_steps",
-                                          "class_support_enabled", "class_count",
-                                          "teacher_count", "committee_count")},
+                                          "class_count", "teacher_count",
+                                          "committee_count")},
         "evidence": items}
 
 
@@ -219,14 +219,11 @@ def batch_evidence(path, plan_path):
             raise ValueError("batch run observation window mismatch")
         if (summary["n_students"] != config["n_students"]
                 or summary["n_staff"] != config["n_staff"]
-                or summary.get("driver", "rule") != config.get("driver", "rule")
-                or summary.get("class_support_enabled", False)
-                != config.get("class_support_enabled", False)):
+                or summary.get("driver", "rule") != config.get("driver", "rule")):
             raise ValueError("batch summary disagrees with planned configuration")
         comparable = {key: config.get(key) for key in ("n_students", "n_staff", "end",
                       "capacity", "open_every", "access_barrier", "outreach_day",
-                      "periods_per_day", "driver", "model_provider", "model_id",
-                      "class_support_enabled")}
+                      "periods_per_day", "driver", "model_provider", "model_id")}
         comparable["scenario_git"] = summary.get("scenario_git")
         if base is None:
             base = comparable

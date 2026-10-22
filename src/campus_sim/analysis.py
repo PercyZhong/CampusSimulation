@@ -538,12 +538,10 @@ def summarize(run_dir):
     status, days, events, students, staff = _read(run_dir)
     manifest = json.loads((run_dir / "runner.json").read_text(encoding="utf-8"))
     n = len(students)
-    role_enabled = manifest["contract"]["configuration"]["plugins"]["campus"].get(
-        "class_support_enabled", False)
     classes = {student.get("class_id") for student in students if student.get("class_id")}
-    if role_enabled and (len(classes) != (n + CLASS_SIZE - 1) // CLASS_SIZE
-                         or sum(student.get("class_committee", False) for student in students)
-                         != len(classes)):
+    if (len(classes) != (n + CLASS_SIZE - 1) // CLASS_SIZE
+            or sum(student.get("class_committee", False) for student in students)
+            != len(classes)):
         raise ValueError("class assignments require one committee member per class")
     class_roster = ([{"class_id": group, "teacher_id": "t" + group.removeprefix("class-"),
                      "committee_id": next(student["id"] for student in students
@@ -551,7 +549,7 @@ def summarize(run_dir):
                                           and student["class_committee"]),
                      "students": [student["id"] for student in students
                                   if student["class_id"] == group]}
-                    for group in sorted(classes)] if role_enabled else [])
+                    for group in sorted(classes)])
     waits = [e["detail"]["wait_days"] for e in events if e["action"] == "accept_support" and e["status"] == "completed"]
     pending = sum(s["pending_day"] is not None for s in students)
     groups = {}
@@ -671,12 +669,10 @@ def summarize(run_dir):
                "condition": manifest["contract"]["configuration"]["plugins"]["campus"]["condition"],
                "seed": manifest["contract"]["configuration"]["plugins"]["campus"]["seed"],
                "n_students": n, "n_staff": len(staff),
-               "class_support_enabled": role_enabled,
                "class_size": CLASS_SIZE, "class_count": len(classes),
                "class_roster": class_roster,
-               "teacher_count": len(classes) if role_enabled else 0,
-               "committee_count": (sum(student.get("class_committee", False)
-                                       for student in students) if role_enabled else 0),
+               "teacher_count": len(classes),
+               "committee_count": sum(student["class_committee"] for student in students),
                "academic_check_in_count": sum(e["action"] == "academic_check_in"
                                               for e in events),
                "peer_support_offer_count": sum(e["action"] == "peer_support_offer"
