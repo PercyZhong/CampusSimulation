@@ -9,6 +9,7 @@ from pathlib import Path
 from society0.kernel.observation import Observation
 
 from .domain import CLASS_SIZE
+from .social_competition import svo_group
 
 SCHEMA_VERSION = 1
 ACTION_NAMES = ("attend", "rest", "peer", "request", "accept_support")
@@ -776,6 +777,66 @@ def summarize(run_dir):
     summary["driver"] = manifest["contract"]["configuration"].get("driver", "rule")
     summary["model_provider"] = manifest["contract"]["configuration"]["plugins"]["campus"].get("model_provider")
     summary["model_id"] = manifest["contract"]["configuration"]["plugins"]["campus"].get("model_id")
+    campus_config = manifest["contract"]["configuration"]["plugins"]["campus"]
+    summary["scenario"] = campus_config.get("scenario", "support_access")
+    summary["competition_intervention"] = campus_config.get("competition_intervention", "none")
+    if summary["scenario"] == "social_competition":
+        choices = [e for e in events if e["action"] == "social_choice"]
+        votes = [e for e in events if e["action"] == "election_vote"]
+        results = [e for e in events if e["action"] == "election_result"]
+        impacts = [e for e in events if e["action"] == "social_impact"]
+        expected = n * summary["complete_steps"]
+        if len(choices) != expected or len(votes) != n or len(results) != len(classes):
+            raise ValueError("social scenario event count disagrees with run configuration")
+        daily_social = []
+        for day in days:
+            day_number = day["day"]
+            subset = [e for e in choices if e["day"] == day_number]
+            if len(subset) != n or len({e["actor"] for e in subset}) != n:
+                raise ValueError("social scenario requires one choice per student per day")
+            counts = {name: sum(e["status"] == name for e in subset)
+                      for name in ("cooperate", "compete", "undermine")}
+            long_term = day.get("long_term_state_means", {})
+            daily_social.append({
+                "day": day_number, "choice_counts": counts,
+                "cooperation_rate": counts["cooperate"] / n,
+                "competition_rate": counts["compete"] / n,
+                "malicious_competition_rate": counts["undermine"] / n,
+                "mean_stress": day.get("mean_stress"),
+                "mean_mood": day.get("mean_mood"),
+                "mean_belonging": long_term.get("belonging"),
+                "mean_self_efficacy": long_term.get("self_efficacy"),
+                "mean_social_avoidance": long_term.get("social_avoidance"),
+            })
+        choice_counts = {name: sum(e["status"] == name for e in choices)
+                         for name in ("cooperate", "compete", "undermine")}
+        orientations = {s["id"]: svo_group(s["svo_prosociality"]) for s in students}
+        by_orientation = {group: {name: sum(
+            e["status"] == name and orientations[e["actor"]] == group for e in choices)
+            for name in choice_counts} for group in
+            ("prosocial", "individualistic", "competitive")}
+        summary["social_competition"] = {
+            "svo_prosociality_mean": sum(s["svo_prosociality"] for s in students) / n,
+            "svo_prosociality_by_student": {s["id"]: s["svo_prosociality"] for s in students},
+            "svo_orientation_counts": {group: sum(value == group for value in orientations.values())
+                                       for group in by_orientation},
+            "choice_counts_by_orientation": by_orientation,
+            "choice_counts": choice_counts,
+            "cooperation_rate": choice_counts["cooperate"] / expected,
+            "competition_rate": choice_counts["compete"] / expected,
+            "malicious_competition_rate": choice_counts["undermine"] / expected,
+            "daily_trajectory": daily_social,
+            "elections": [{"day": e["day"], **e["detail"]} for e in results],
+            "vote_count": len(votes),
+            "supportive_impact_count": sum(e["status"] == "supportive" for e in impacts),
+            "harmful_impact_count": sum(e["status"] == "harmful" for e in impacts),
+            "psychological_state_means": {key: sum(s[key] for s in students) / n
+                                          for key in ("stress", "mood", "belonging",
+                                                      "connection", "self_efficacy")},
+            "interpretation": (
+                "synthetic behavioral propensity and model-internal states; "
+                "not a validated SVO or clinical measure"),
+        }
     summary["requested_rate"] = summary["requested_count"] / n
     if all("initial_stress" in s and "mood" in s for s in students):
         changes = [s["stress"] - s["initial_stress"] for s in students]

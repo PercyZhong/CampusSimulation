@@ -193,12 +193,22 @@ def run_evidence(path):
     _trajectories(path, steps, items)
     if summary.get("teacher_count", 0):
         _role_examples(path, items)
+    if social := summary.get("social_competition"):
+        _evidence(items, "模拟社会价值取向均值", round(social["svo_prosociality_mean"], 6),
+                  "summary.json")
+        for name, label in (("cooperation_rate", "合作率"),
+                            ("competition_rate", "竞争率"),
+                            ("malicious_competition_rate", "恶性竞争率")):
+            _evidence(items, label, round(social[name], 6), "summary.json")
+        _evidence(items, "逐日社交行为与心理状态", social["daily_trajectory"], "summary.json")
+        _evidence(items, "班级选举结果", social["elections"], "summary.json")
     return {"kind": "run", "name": path.name, "metadata": {
         key: summary.get(key) for key in ("condition", "seed", "driver", "model_provider",
                                           "model_id", "scenario_git", "config_sha256",
                                           "n_students", "n_staff", "complete_steps",
                                           "class_count", "teacher_count",
-                                          "committee_count")},
+                                          "committee_count", "scenario",
+                                          "competition_intervention")},
         "evidence": items}
 
 
@@ -219,11 +229,16 @@ def batch_evidence(path, plan_path):
             raise ValueError("batch run observation window mismatch")
         if (summary["n_students"] != config["n_students"]
                 or summary["n_staff"] != config["n_staff"]
-                or summary.get("driver", "rule") != config.get("driver", "rule")):
+                or summary.get("driver", "rule") != config.get("driver", "rule")
+                or summary.get("scenario", "support_access")
+                != config.get("scenario", "support_access")
+                or summary.get("competition_intervention", "none")
+                != config.get("competition_intervention", "none")):
             raise ValueError("batch summary disagrees with planned configuration")
         comparable = {key: config.get(key) for key in ("n_students", "n_staff", "end",
                       "capacity", "open_every", "access_barrier", "outreach_day",
-                      "periods_per_day", "driver", "model_provider", "model_id")}
+                      "periods_per_day", "driver", "model_provider", "model_id",
+                      "scenario", "competition_intervention")}
         comparable["scenario_git"] = summary.get("scenario_git")
         if base is None:
             base = comparable
@@ -249,6 +264,15 @@ def batch_evidence(path, plan_path):
                         _evidence(items, f"{condition} 相对 baseline：{label}同种子配对差", {
                             "mean": round(sum(deltas.values()) / len(deltas), 6),
                             "by_seed": deltas}, "batch run summary.json")
+        if base.get("scenario") == "social_competition":
+            for key, label in (("cooperation_rate", "合作率"),
+                               ("competition_rate", "竞争率"),
+                               ("malicious_competition_rate", "恶性竞争率")):
+                values = [summaries[condition, seed]["social_competition"][key]
+                          for seed in plan["seeds"]]
+                _evidence(items, f"{condition}：{label}均值", round(sum(values) / len(values), 6),
+                          "batch run summary.json",
+                          detail={"by_seed": dict(zip(plan["seeds"], values))})
         representative = next(item for item in plan["runs"]
                               if item["config"]["condition"] == condition
                               and item["config"]["seed"] == plan["seeds"][0])
@@ -321,6 +345,11 @@ def generate_report(packet, provider, model, *, api_key=None):
         raise TypeError("model report must be a JSON object")
     checked = _checked_sections(draft, {item["id"] for item in packet["evidence"]})
     checked["limitations"].append("压力和心情是未校准的模型内部变量；建议仅用于下一轮模拟验证。")
+    if (packet["metadata"].get("scenario") == "social_competition"
+            or packet["metadata"].get("shared_config", {}).get("scenario")
+            == "social_competition"):
+        checked["limitations"].append(
+            "社会价值取向和合作竞争行为由合成规则生成，未经过真实问卷或校园行为数据校准。")
     return {"schema_version": 1, "prompt_version": PROMPT_VERSION,
             "generated_at": datetime.now(UTC).isoformat(),
             "analysis_model": {"provider": provider, "model": model, "temperature": 0.1,

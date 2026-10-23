@@ -40,6 +40,7 @@ def make_population(config):
                      "belonging": round(0.25 + 0.6 * unit(config.seed, "belonging", sid), 6),
                      "help_seeking_belief": round(0.25 + 0.6 * unit(config.seed, "help_belief", sid), 6),
                      "social_avoidance": round(0.1 + 0.7 * unit(config.seed, "avoidance", sid), 6),
+                     "svo_prosociality": round(0.15 + 0.7 * unit(config.seed, "svo", sid), 6),
                      "supported": False, "pending_day": None, "wait_days": 0,
                      "supported_day": None, "follow_up_sent": False,
                      "low_streak": 0, "ever_requested": False, "ever_supported": False,

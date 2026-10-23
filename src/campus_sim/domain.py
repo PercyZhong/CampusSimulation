@@ -27,6 +27,8 @@ class Config:
     model_temperature: float = 0.2
     periods_per_day: int = 1
     policy_components: dict = field(default_factory=dict)
+    scenario: str = "support_access"
+    competition_intervention: str = "none"
 
     @classmethod
     def parse(cls, raw):
@@ -69,6 +71,16 @@ class Config:
         if value.condition not in {"baseline", "outreach", "easier_access",
                                    "targeted_outreach"}:
             raise ValueError("unknown condition")
+        if type(value.scenario) is not str or value.scenario not in {
+                "support_access", "social_competition"}:
+            raise ValueError("unknown scenario")
+        if (type(value.competition_intervention) is not str
+                or value.competition_intervention not in {"none", "anti_malicious"}):
+            raise ValueError("unknown competition intervention")
+        if value.scenario != "social_competition" and value.competition_intervention != "none":
+            raise ValueError("competition intervention requires social_competition scenario")
+        if value.scenario == "social_competition" and value.n_students < 2:
+            raise ValueError("social_competition requires at least two students")
         if type(value.access_barrier) not in (int, float) or not 0 <= value.access_barrier <= 1:
             raise ValueError("access_barrier must be in [0,1]")
         if type(value.model_temperature) not in (int, float) or not 0 <= value.model_temperature <= 2:

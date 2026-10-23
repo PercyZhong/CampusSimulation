@@ -65,6 +65,9 @@ def campus_schedule_plugin(config, actor_ids, staff_ids, teacher_ids):
                 view.iter_query("SELECT ordinal,day,actor,action,status,reason,detail FROM campus_events WHERE day=? ORDER BY ordinal", (day,))])
             return StepResult(metrics=metrics, tables={"events": events})
 
+        def social_round(phase):
+            return StepResult(metrics=campus.social_round(phase.moment.time))
+
         decisions = ((Phase("morning", period_decide("morning")),
                       Phase("afternoon", period_decide("afternoon")),
                       Phase("evening", period_decide("evening")))
@@ -74,5 +77,8 @@ def campus_schedule_plugin(config, actor_ids, staff_ids, teacher_ids):
         context.provide("schedule", SequenceSchedule(range(config.start, config.end + 1),
             (Phase("prepare", prepare), Phase("staff_shift", staff_shift),
              Phase("teacher_review", teacher_review),
-             *decisions, *adviser_phases, Phase("settle", settle))))
+             *decisions, *adviser_phases,
+             *((Phase("social_round", social_round),)
+               if config.scenario == "social_competition" else ()),
+             Phase("settle", settle))))
     return Plugin("schedule", ("campus", "runtime"), install)

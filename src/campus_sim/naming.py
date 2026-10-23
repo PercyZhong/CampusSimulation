@@ -7,4 +7,5 @@ def run_stem(condition, seed, config):
         driver = f"llm-{config['model_provider']}-{config['model_id']}"
     else:
         driver = "rule"
-    return f"{condition}-{driver}-seed{seed}"
+    scenario = "social-" if config.get("scenario") == "social_competition" else ""
+    return f"{scenario}{condition}-{driver}-seed{seed}"

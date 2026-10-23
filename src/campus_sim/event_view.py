@@ -19,7 +19,8 @@ def _validate_filters(day, action, actor, offset, limit):
         "peer_invitation", "peer_response", "peer_callback", "study_group",
         "intervention_exposure", "scenario_trigger", "teacher_review",
         "academic_check_in", "committee_check_in", "peer_support_offer",
-        "professional_referral_offer", "referral_information"
+        "professional_referral_offer", "referral_information",
+        "social_choice", "social_impact", "election_vote", "election_result"
     }:
         raise ValueError("unknown action")
     if actor is not None and (not isinstance(actor, str) or not actor or

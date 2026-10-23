@@ -9,6 +9,36 @@ import pytest
 pytestmark = pytest.mark.skipif(sys.platform != "linux", reason="Society0 POSIX run contract")
 
 
+def test_social_competition_records_daily_choices_class_elections_and_metrics(tmp_path):
+    import asyncio
+
+    from society0.kernel.runner import run_plan
+
+    from campus_sim.analysis import export
+    from campus_sim.event_view import read_timeline
+    from campus_sim.plan import build
+
+    raw = {"end": 3, "n_students": 6, "seed": 11,
+           "scenario": "social_competition", "competition_intervention": "anti_malicious"}
+    path = tmp_path / "social"
+    asyncio.run(run_plan(path, build(raw)))
+    summary = export(path)
+    social = summary["social_competition"]
+    assert summary["scenario"] == "social_competition"
+    assert sum(social["choice_counts"].values()) == 18
+    assert len(social["daily_trajectory"]) == 3
+    assert social["vote_count"] == 6
+    assert len(social["elections"]) == 2
+    assert sum(social["svo_orientation_counts"].values()) == 6
+    assert sum(social["choice_counts_by_orientation"][group][choice]
+               for group in social["choice_counts_by_orientation"]
+               for choice in social["choice_counts"]) == 18
+    assert social["supportive_impact_count"] + social["harmful_impact_count"] <= 18
+    assert all(sum(item["votes"].values()) == len(summary["class_roster"][index]["students"])
+               for index, item in enumerate(social["elections"]))
+    assert read_timeline(path, action="social_choice")["total"] == 18
+
+
 def test_class_roles_join_schedule_and_export_without_extra_students(tmp_path):
     import asyncio
 

@@ -29,6 +29,12 @@ from .domain import (
 from .language import language_backend
 from .models import _dialogue
 from .population import make_population, make_staff, make_teachers
+from .social_competition import (
+    apply_partner_effect,
+    apply_social_effect,
+    election_candidate,
+    social_choice,
+)
 
 SCHEMA = (
     "CREATE TABLE campus_students(id TEXT NOT NULL PRIMARY KEY, body TEXT NOT NULL)",
@@ -931,6 +937,68 @@ class Campus:
             return {"status": "completed", "action": action}
         result = self.store.transaction(write)
         return ActionResult(result["status"], result)
+
+    def social_round(self, day):
+        """Record one social choice per student and a class ballot on day five."""
+        def write(writer):
+            students = [json.loads(body) for (body,) in writer.iter_query(
+                "SELECT body FROM campus_students ORDER BY id")]
+            by_class = {}
+            for student in students:
+                by_class.setdefault(student["class_id"], []).append(student)
+            counts = {"cooperate": 0, "compete": 0, "undermine": 0}
+            for group in by_class.values():
+                for index, student in enumerate(group):
+                    choice = social_choice(self.config.seed, day, student,
+                                           self.config.competition_intervention)
+                    partner = group[(index + 1) % len(group)] if len(group) > 1 else None
+                    effects = apply_social_effect(student, choice)
+                    writer.execute("UPDATE campus_students SET body=? WHERE id=?",
+                                   (dumps(student), student["id"]))
+                    self.event(writer, day, student["id"], "social_choice", choice,
+                               detail={"period": "evening",
+                                       "partner": partner["id"] if partner else None,
+                                       "class_id": student["class_id"],
+                                       "svo_prosociality": student["svo_prosociality"],
+                                       "intervention": self.config.competition_intervention,
+                                       "psychological_effect": effects})
+                    if partner is not None:
+                        impact = apply_partner_effect(partner, choice)
+                        if impact is not None:
+                            writer.execute("UPDATE campus_students SET body=? WHERE id=?",
+                                           (dumps(partner), partner["id"]))
+                            self.event(writer, day, partner["id"], "social_impact",
+                                       "supportive" if choice == "cooperate" else "harmful",
+                                       detail={"period": "evening", "source": student["id"],
+                                               "class_id": student["class_id"],
+                                               "psychological_effect": impact})
+                    counts[choice] += 1
+            if day == min(5, self.config.end):
+                for class_id, group in by_class.items():
+                    candidates = [student["id"] for student in group[:2]]
+                    votes = {candidate: 0 for candidate in candidates}
+                    for student in group:
+                        candidate = election_candidate(
+                            self.config.seed, day, student, candidates,
+                            self.config.competition_intervention)
+                        votes[candidate] += 1
+                        self.event(writer, day, student["id"], "election_vote", "cast",
+                                   detail={"period": "evening", "class_id": class_id,
+                                           "candidates": candidates, "candidate": candidate,
+                                           "intervention": self.config.competition_intervention})
+                    winner = sorted(candidates,
+                                    key=lambda candidate: (-votes[candidate], candidate))[0]
+                    elected = next(student for student in group if student["id"] == winner)
+                    elected["elected_representative"] = True
+                    writer.execute("UPDATE campus_students SET body=? WHERE id=?",
+                                   (dumps(elected), winner))
+                    self.event(writer, day, "t" + class_id.removeprefix("class-"),
+                               "election_result", "completed",
+                               detail={"period": "evening", "class_id": class_id,
+                                       "candidates": candidates, "votes": votes,
+                                       "winner": winner, "tie_rule": "lowest_student_id"})
+            return {"social_choices": sum(counts.values()), **counts}
+        return self.store.transaction(write)
 
     def settle(self, day, load):
         def write(writer):
