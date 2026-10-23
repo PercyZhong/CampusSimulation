@@ -986,8 +986,7 @@ class Campus:
                                    detail={"period": "evening", "class_id": class_id,
                                            "candidates": candidates, "candidate": candidate,
                                            "intervention": self.config.competition_intervention})
-                    winner = sorted(candidates,
-                                    key=lambda candidate: (-votes[candidate], candidate))[0]
+                    winner = min(candidates, key=lambda candidate: (-votes[candidate], candidate))
                     elected = next(student for student in group if student["id"] == winner)
                     elected["elected_representative"] = True
                     writer.execute("UPDATE campus_students SET body=? WHERE id=?",

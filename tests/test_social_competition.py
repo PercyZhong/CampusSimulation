@@ -4,8 +4,8 @@ from campus_sim.domain import Config
 from campus_sim.naming import run_stem
 from campus_sim.population import make_population
 from campus_sim.social_competition import (
-    apply_social_effect,
     apply_partner_effect,
+    apply_social_effect,
     election_candidate,
     social_choice,
     svo_group,
