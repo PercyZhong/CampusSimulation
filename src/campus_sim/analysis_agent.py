@@ -202,19 +202,43 @@ def run_evidence(path):
             _evidence(items, label, round(social[name], 6), "summary.json")
         _evidence(items, "逐日社交行为与心理状态", social["daily_trajectory"], "summary.json")
         _evidence(items, "班级选举结果", social["elections"], "summary.json")
+    if bullying := summary.get("school_bullying"):
+        _evidence(items, "受欺凌学生与教师干预策略", {
+            "target_ids": bullying["target_ids"],
+            "teacher_strategy": bullying["teacher_strategy"]}, "summary.json")
+        _evidence(items, "欺凌事件和教师干预次数", {
+            "incidents": bullying["incident_count"],
+            "interventions": bullying["intervention_count"]}, "summary.json")
+        _evidence(items, "受欺凌学生心理指标首末变化", bullying["target_metrics"],
+                  "summary.json")
+        _evidence(items, "受欺凌学生逐日心理轨迹", bullying["daily_trajectory"],
+                  "summary.json")
+        for student_id in bullying["target_ids"][:2]:
+            _evidence(items, f"合成学生 {student_id} 逐日心理轨迹",
+                      bullying["target_trajectories"][student_id], "summary.json")
     return {"kind": "run", "name": path.name, "metadata": {
         key: summary.get(key) for key in ("condition", "seed", "driver", "model_provider",
                                           "model_id", "scenario_git", "config_sha256",
                                           "n_students", "n_staff", "complete_steps",
                                           "class_count", "teacher_count",
                                           "committee_count", "scenario",
-                                          "competition_intervention")},
+                                          "competition_intervention",
+                                          "bullying_teacher_strategy")},
         "evidence": items}
+
+
+def _bullying_measure(summary, key):
+    bullying = summary["school_bullying"]
+    return (bullying["incident_count"] if key == "incident_count" else
+            bullying["target_metrics"][key]["mean_change"])
 
 
 def batch_evidence(path, plan_path):
     path = Path(path)
     plan = _json(Path(plan_path))
+    comparison_axis = plan.get("comparison_axis", "policy")
+    if comparison_axis not in {"policy", "bullying_teacher"}:
+        raise ValueError("invalid comparison axis")
     if not plan.get("runs") or len(plan["runs"]) != len(plan["conditions"]) * len(plan["seeds"]):
         raise ValueError("invalid batch plan")
     summaries = {}
@@ -222,8 +246,11 @@ def batch_evidence(path, plan_path):
     for item in plan["runs"]:
         summary = _complete_run(path / item["name"])
         config = item["config"]
-        identity = (config["condition"], config["seed"])
-        if identity in summaries or summary["condition"] != identity[0] or summary["seed"] != identity[1]:
+        level = (config["bullying_teacher_strategy"]
+                 if comparison_axis == "bullying_teacher" else config["condition"])
+        identity = (level, config["seed"])
+        if (identity in summaries or summary["condition"] != config["condition"]
+                or summary["seed"] != identity[1]):
             raise ValueError("batch run identity mismatch")
         if summary["complete_steps"] != config["end"]:
             raise ValueError("batch run observation window mismatch")
@@ -233,12 +260,18 @@ def batch_evidence(path, plan_path):
                 or summary.get("scenario", "support_access")
                 != config.get("scenario", "support_access")
                 or summary.get("competition_intervention", "none")
-                != config.get("competition_intervention", "none")):
+                != config.get("competition_intervention", "none")
+                or summary.get("school_bullying", {}).get("teacher_strategy", "none")
+                != config.get("bullying_teacher_strategy", "none")):
             raise ValueError("batch summary disagrees with planned configuration")
         comparable = {key: config.get(key) for key in ("n_students", "n_staff", "end",
                       "capacity", "open_every", "access_barrier", "outreach_day",
                       "periods_per_day", "driver", "model_provider", "model_id",
-                      "scenario", "competition_intervention")}
+                      "scenario", "competition_intervention",
+                      "bullying_teacher_strategy")}
+        if comparison_axis == "bullying_teacher":
+            comparable.pop("bullying_teacher_strategy")
+            comparable["condition"] = config["condition"]
         comparable["scenario_git"] = summary.get("scenario_git")
         if base is None:
             base = comparable
@@ -273,8 +306,38 @@ def batch_evidence(path, plan_path):
                 _evidence(items, f"{condition}：{label}均值", round(sum(values) / len(values), 6),
                           "batch run summary.json",
                           detail={"by_seed": dict(zip(plan["seeds"], values))})
+        if base.get("scenario") == "school_bullying":
+            for key, label in (("incident_count", "欺凌事件次数"),
+                               ("intervention_count", "教师干预次数")):
+                values = [summaries[condition, seed]["school_bullying"][key]
+                          for seed in plan["seeds"]]
+                _evidence(items, f"{condition}：{label}均值",
+                          round(sum(values) / len(values), 6), "batch run summary.json",
+                          detail={"by_seed": dict(zip(plan["seeds"], values))})
+            for key, label in (("self_esteem", "自尊"), ("safety", "安全感"),
+                               ("belonging", "归属感")):
+                values = [summaries[condition, seed]["school_bullying"]
+                          ["target_metrics"][key]["mean_change"] for seed in plan["seeds"]]
+                _evidence(items, f"{condition}：受欺凌学生{label}平均变化",
+                          round(sum(values) / len(values), 6), "batch run summary.json",
+                          detail={"by_seed": dict(zip(plan["seeds"], values))})
+            if (comparison_axis == "bullying_teacher" and condition != "none"
+                    and "none" in plan["conditions"]):
+                for key, label in (("incident_count", "欺凌事件次数"),
+                                   ("self_esteem", "自尊变化"),
+                                   ("safety", "安全感变化"),
+                                   ("belonging", "归属感变化")):
+                    deltas = {seed: round(
+                        _bullying_measure(summaries[condition, seed], key)
+                        - _bullying_measure(summaries["none", seed], key), 6)
+                              for seed in plan["seeds"]}
+                    _evidence(items, f"{condition} 相对无干预：{label}同种子配对差",
+                              {"mean": round(sum(deltas.values()) / len(deltas), 6),
+                               "by_seed": deltas}, "batch run summary.json")
         representative = next(item for item in plan["runs"]
-                              if item["config"]["condition"] == condition
+                              if (item["config"]["bullying_teacher_strategy"]
+                                  if comparison_axis == "bullying_teacher" else
+                                  item["config"]["condition"]) == condition
                               and item["config"]["seed"] == plan["seeds"][0])
         run_path = path / representative["name"]
         trajectory_items = []
@@ -350,6 +413,11 @@ def generate_report(packet, provider, model, *, api_key=None):
             == "social_competition"):
         checked["limitations"].append(
             "社会价值取向和合作竞争行为由合成规则生成，未经过真实问卷或校园行为数据校准。")
+    if (packet["metadata"].get("scenario") == "school_bullying"
+            or packet["metadata"].get("shared_config", {}).get("scenario")
+            == "school_bullying"):
+        checked["limitations"].append(
+            "欺凌事件和自尊、安全感、归属感均为未校准的合成变量，不能用于识别或评价真实学生。")
     return {"schema_version": 1, "prompt_version": PROMPT_VERSION,
             "generated_at": datetime.now(UTC).isoformat(),
             "analysis_model": {"provider": provider, "model": model, "temperature": 0.1,

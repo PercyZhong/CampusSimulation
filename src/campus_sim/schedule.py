@@ -68,6 +68,9 @@ def campus_schedule_plugin(config, actor_ids, staff_ids, teacher_ids):
         def social_round(phase):
             return StepResult(metrics=campus.social_round(phase.moment.time))
 
+        def bullying_round(phase):
+            return StepResult(metrics=campus.bullying_round(phase.moment.time))
+
         decisions = ((Phase("morning", period_decide("morning")),
                       Phase("afternoon", period_decide("afternoon")),
                       Phase("evening", period_decide("evening")))
@@ -80,5 +83,7 @@ def campus_schedule_plugin(config, actor_ids, staff_ids, teacher_ids):
              *decisions, *adviser_phases,
              *((Phase("social_round", social_round),)
                if config.scenario == "social_competition" else ()),
+             *((Phase("bullying_round", bullying_round),)
+               if config.scenario == "school_bullying" else ()),
              Phase("settle", settle))))
     return Plugin("schedule", ("campus", "runtime"), install)

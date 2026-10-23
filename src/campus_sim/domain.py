@@ -29,6 +29,7 @@ class Config:
     policy_components: dict = field(default_factory=dict)
     scenario: str = "support_access"
     competition_intervention: str = "none"
+    bullying_teacher_strategy: str = "none"
 
     @classmethod
     def parse(cls, raw):
@@ -72,7 +73,7 @@ class Config:
                                    "targeted_outreach"}:
             raise ValueError("unknown condition")
         if type(value.scenario) is not str or value.scenario not in {
-                "support_access", "social_competition"}:
+                "support_access", "social_competition", "school_bullying"}:
             raise ValueError("unknown scenario")
         if (type(value.competition_intervention) is not str
                 or value.competition_intervention not in {"none", "anti_malicious"}):
@@ -81,6 +82,14 @@ class Config:
             raise ValueError("competition intervention requires social_competition scenario")
         if value.scenario == "social_competition" and value.n_students < 2:
             raise ValueError("social_competition requires at least two students")
+        if (type(value.bullying_teacher_strategy) is not str
+                or value.bullying_teacher_strategy not in {
+                    "none", "private_check_in", "classroom_norms", "safety_plan"}):
+            raise ValueError("unknown bullying teacher strategy")
+        if value.scenario != "school_bullying" and value.bullying_teacher_strategy != "none":
+            raise ValueError("bullying teacher strategy requires school_bullying scenario")
+        if value.scenario == "school_bullying" and value.n_students < 2:
+            raise ValueError("school_bullying requires at least two students")
         if type(value.access_barrier) not in (int, float) or not 0 <= value.access_barrier <= 1:
             raise ValueError("access_barrier must be in [0,1]")
         if type(value.model_temperature) not in (int, float) or not 0 <= value.model_temperature <= 2:

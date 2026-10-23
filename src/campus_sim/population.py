@@ -27,6 +27,13 @@ def make_population(config):
         sid = f"s{number:03d}"
         connection = round(0.2 + 0.55 * unit(config.seed, "connection", sid), 6)
         stress = round(0.25 + 0.4 * unit(config.seed, "stress", sid), 6)
+        self_esteem = round(0.42 + 0.35 * unit(config.seed, "self_esteem", sid), 6)
+        safety = round(0.5 + 0.3 * unit(config.seed, "safety", sid), 6)
+        belonging = round(0.25 + 0.6 * unit(config.seed, "belonging", sid), 6)
+        class_start = number // CLASS_SIZE * CLASS_SIZE
+        class_end = min(class_start + CLASS_SIZE, config.n_students)
+        target = (config.scenario == "school_bullying" and class_end - class_start >= 2
+                  and number == class_end - 1)
         rows.append({"id": sid, "class_id": class_id(sid),
                      "class_committee": sid == committee_id(class_number(sid)),
                      "stress": stress,
@@ -37,7 +44,11 @@ def make_population(config):
                      "willingness": round(0.2 + 0.6 * unit(config.seed, "willingness", sid), 6),
                      "academic_engagement": round(0.35 + 0.5 * unit(config.seed, "engagement", sid), 6),
                      "self_efficacy": round(0.3 + 0.55 * unit(config.seed, "efficacy", sid), 6),
-                     "belonging": round(0.25 + 0.6 * unit(config.seed, "belonging", sid), 6),
+                     "belonging": belonging, "initial_belonging": belonging,
+                     "self_esteem": self_esteem, "initial_self_esteem": self_esteem,
+                     "safety": safety, "initial_safety": safety,
+                     "bullying_target": target, "bullying_protection_until": 0,
+                     "bullying_prevention_multiplier": 1.0,
                      "help_seeking_belief": round(0.25 + 0.6 * unit(config.seed, "help_belief", sid), 6),
                      "social_avoidance": round(0.1 + 0.7 * unit(config.seed, "avoidance", sid), 6),
                      "svo_prosociality": round(0.15 + 0.7 * unit(config.seed, "svo", sid), 6),

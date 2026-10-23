@@ -162,7 +162,9 @@ def main(argv=None):
         conditions = plan["conditions"]
         seeds = plan["seeds"]
         runs = plan["runs"]
+        comparison_axis = plan.get("comparison_axis", "policy")
     else:
+        comparison_axis = "policy"
         conditions = ("baseline", "outreach", "easier_access", "targeted_outreach")
         seeds = (11, 22, 33)
         runs = []
@@ -178,7 +180,9 @@ def main(argv=None):
         summaries.append(export(path))
     aggregate = {}
     for condition in conditions:
-        subset = [s for s in summaries if s["condition"] == condition]
+        subset = [s for s in summaries if (
+            s["school_bullying"]["teacher_strategy"]
+            if comparison_axis == "bullying_teacher" else s["condition"]) == condition]
         aggregate[condition] = {}
         for metric in ("requested_count", "requested_rate", "supported_count", "supported_rate",
                        "completed_wait_mean_days", "low_connection_7d_count",
@@ -196,8 +200,19 @@ def main(argv=None):
                 "max": max(values) if values else None,
                 "n_seeds": len(values),
             }
+        if comparison_axis == "bullying_teacher":
+            for metric in ("incident_count", "intervention_count"):
+                values = [s["school_bullying"][metric] for s in subset]
+                aggregate[condition][metric] = {
+                    "mean": sum(values) / len(values), "n_seeds": len(values)}
+            for key in ("self_esteem", "safety", "belonging"):
+                values = [s["school_bullying"]["target_metrics"][key]["mean_change"]
+                          for s in subset]
+                aggregate[condition][key + "_mean_change"] = {
+                    "mean": sum(values) / len(values), "n_seeds": len(values)}
     comparison = {"schema_version": 1, "runs": summaries, "by_condition": aggregate,
                   "conditions": list(conditions), "seeds": list(seeds),
+                  "comparison_axis": comparison_axis,
                   "interpretation": "uncalibrated model-internal scenario results; seed repeats imply no significance"}
     root.mkdir(parents=True, exist_ok=True)
     (root / "comparison.json").write_text(json.dumps(comparison, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")

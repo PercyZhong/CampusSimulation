@@ -837,6 +837,66 @@ def summarize(run_dir):
                 "synthetic behavioral propensity and model-internal states; "
                 "not a validated SVO or clinical measure"),
         }
+    if summary["scenario"] == "school_bullying":
+        targets = [student for student in students if student["bullying_target"]]
+        incidents = [event for event in events if event["action"] == "bullying_incident"]
+        responses = [event for event in events
+                     if event["action"] == "bullying_teacher_response"]
+        supports = [event for event in events if event["action"] == "bullying_support"]
+        if not targets or len(responses) != len(incidents):
+            raise ValueError("bullying scenario lacks targets or matched teacher responses")
+        target_ids = {student["id"] for student in targets}
+        if any(event["actor"] not in target_ids for event in incidents):
+            raise ValueError("bullying incident targets an undesignated student")
+        observed = {(event["day"], event["detail"]["class_id"], event["actor"])
+                    for event in incidents}
+        strategy = campus_config.get("bullying_teacher_strategy", "none")
+        if any((event["day"], event["detail"]["class_id"],
+                event["detail"]["student_id"]) not in observed
+               or event["detail"]["strategy"] != strategy for event in responses):
+            raise ValueError("teacher response is not tied to an observed incident")
+        if len(supports) != (0 if strategy == "none" else len(incidents)):
+            raise ValueError("bullying support count disagrees with intervention strategy")
+        states = [event for event in events if event["action"] == "student_state"
+                  and event["actor"] in target_ids]
+        if len(states) != len(targets) * summary["complete_steps"]:
+            raise ValueError("bullying target daily state count disagrees with run")
+        trajectories = {student["id"]: [] for student in targets}
+        for event in states:
+            trajectories[event["actor"]].append({
+                "day": event["day"],
+                **{key: event["detail"][key] for key in
+                   ("self_esteem", "safety", "belonging", "stress", "mood")},
+            })
+        for points in trajectories.values():
+            points.sort(key=lambda point: point["day"])
+            if [point["day"] for point in points] != [day["day"] for day in days]:
+                raise ValueError("bullying target trajectory has missing days")
+        summary["school_bullying"] = {
+            "teacher_strategy": strategy,
+            "target_ids": sorted(target_ids),
+            "target_count": len(targets),
+            "incident_count": len(incidents),
+            "incident_type_counts": dict(Counter(
+                event["detail"]["incident_type"] for event in incidents)),
+            "teacher_response_count": len(responses),
+            "intervention_count": len(supports),
+            "target_metrics": {key: {
+                "initial_mean": sum(student[f"initial_{key}"] for student in targets)
+                / len(targets),
+                "final_mean": sum(student[key] for student in targets) / len(targets),
+                "mean_change": sum(student[key] - student[f"initial_{key}"]
+                                   for student in targets) / len(targets),
+            } for key in ("self_esteem", "safety", "belonging")},
+            "daily_trajectory": [{"day": day["day"],
+                                  "incident_count": sum(event["day"] == day["day"]
+                                                        for event in incidents),
+                                  **{key: day[f"target_mean_{key}"] for key in
+                                     ("self_esteem", "safety", "belonging", "stress", "mood")}}
+                                 for day in days],
+            "target_trajectories": trajectories,
+            "interpretation": "uncalibrated synthetic exposure and model-internal psychological needs",
+        }
     summary["requested_rate"] = summary["requested_count"] / n
     if all("initial_stress" in s and "mood" in s for s in students):
         changes = [s["stress"] - s["initial_stress"] for s in students]

@@ -29,6 +29,13 @@ from .domain import (
 from .language import language_backend
 from .models import _dialogue
 from .population import make_population, make_staff, make_teachers
+from .school_bullying import (
+    aggressor_for_class,
+    apply_incident,
+    apply_teacher_response,
+    incident_occurs,
+    incident_type,
+)
 from .social_competition import (
     apply_partner_effect,
     apply_social_effect,
@@ -999,6 +1006,51 @@ class Campus:
             return {"social_choices": sum(counts.values()), **counts}
         return self.store.transaction(write)
 
+    def bullying_round(self, day):
+        """Expose a fixed synthetic target, then let the class teacher respond."""
+        def write(writer):
+            groups = {}
+            for body, in writer.iter_query("SELECT body FROM campus_students ORDER BY id"):
+                student = json.loads(body)
+                groups.setdefault(student["class_id"], []).append(student)
+            incident_count = 0
+            response_count = 0
+            for class_id, group in groups.items():
+                target = next((s for s in group if s["bullying_target"]), None)
+                if target is None or not incident_occurs(self.config.seed, day, target):
+                    continue
+                aggressor = aggressor_for_class(group)
+                kind = incident_type(self.config.seed, day, target["id"])
+                incident_effect = apply_incident(target)
+                writer.execute("UPDATE campus_students SET body=? WHERE id=?",
+                               (dumps(target), target["id"]))
+                self.event(writer, day, target["id"], "bullying_incident", "observed",
+                           detail={"period": "evening", "class_id": class_id,
+                                   "aggressor_id": aggressor, "incident_type": kind,
+                                   "psychological_effect": incident_effect})
+                incident_count += 1
+                teacher_id = "t" + class_id.removeprefix("class-")
+                strategy = self.config.bullying_teacher_strategy
+                response_effect = apply_teacher_response(target, strategy, day)
+                self.event(writer, day, teacher_id, "bullying_teacher_response",
+                           "observed_only" if strategy == "none" else "completed",
+                           detail={"period": "evening", "class_id": class_id,
+                                   "student_id": target["id"], "incident_type": kind,
+                                   "strategy": strategy, "basis": "observed_same_day_incident",
+                                   "psychological_effect": response_effect})
+                if response_effect is not None:
+                    writer.execute("UPDATE campus_students SET body=? WHERE id=?",
+                                   (dumps(target), target["id"]))
+                    self.event(writer, day, target["id"], "bullying_support", "received",
+                               detail={"period": "evening", "teacher_id": teacher_id,
+                                       "strategy": strategy,
+                                       "psychological_effect": response_effect,
+                                       "protection_until": target["bullying_protection_until"]})
+                    response_count += 1
+            return {"bullying_incidents": incident_count,
+                    "bullying_interventions": response_count}
+        return self.store.transaction(write)
+
     def settle(self, day, load):
         def write(writer):
             usage = writer.query("SELECT used FROM campus_service_usage WHERE day=?", (day,))
@@ -1102,7 +1154,10 @@ class Campus:
                     "memory_action_counts": state["long_term_memory"]["action_counts"],
                     "memory_partner_traces": state["long_term_memory"]["partners"],
                     "missed_course_streak": state["missed_course_streak"],
-                    "supported": state["supported"]})
+                    "supported": state["supported"],
+                    **({"self_esteem": state["self_esteem"], "safety": state["safety"],
+                        "bullying_target": state["bullying_target"]}
+                       if self.config.scenario == "school_bullying" else {})})
                 states.append(state)
             rel_decay = 0
             for left, right, strength, first_day, last_day, contacts, relation_kind in writer.iter_query(
@@ -1146,6 +1201,13 @@ class Campus:
                                   s["supported_day"] is not None and day - s["supported_day"] <= 3
                                   for s in states)},
             }
+            if self.config.scenario == "school_bullying":
+                targets = [state for state in states if state["bullying_target"]]
+                metrics["bullying_target_count"] = len(targets)
+                for key in ("self_esteem", "safety", "belonging", "stress", "mood"):
+                    metrics[f"target_mean_{key}"] = (
+                        round(sum(state[key] for state in targets) / len(targets), 6)
+                        if targets else None)
             writer.execute("INSERT INTO campus_days VALUES(?,?)", (day, dumps(metrics)))
             return metrics
         return self.store.transaction(write)

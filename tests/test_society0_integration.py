@@ -9,6 +9,74 @@ import pytest
 pytestmark = pytest.mark.skipif(sys.platform != "linux", reason="Society0 POSIX run contract")
 
 
+def test_bullying_strategy_comparison_keeps_seed_and_measures_target_needs(tmp_path):
+    import asyncio
+
+    from society0.kernel.runner import run_plan
+
+    from campus_sim.analysis import export
+    from campus_sim.plan import build
+
+    raw = {"end": 10, "n_students": 5, "seed": 11,
+           "scenario": "school_bullying"}
+    summaries = {}
+    for strategy in ("none", "private_check_in", "classroom_norms", "safety_plan"):
+        path = tmp_path / strategy
+        asyncio.run(run_plan(path, build({**raw, "bullying_teacher_strategy": strategy})))
+        summaries[strategy] = export(path)["school_bullying"]
+        events = [json.loads(line) for line in (path / "events.jsonl").read_text(
+            encoding="utf-8").splitlines()]
+        incidents = {(event["day"], event["detail"]["class_id"], event["actor"])
+                     for event in events if event["action"] == "bullying_incident"}
+        responses = [event for event in events
+                     if event["action"] == "bullying_teacher_response"]
+        assert all((event["day"], event["detail"]["class_id"],
+                    event["detail"]["student_id"]) in incidents for event in responses)
+        assert all(event["detail"]["basis"] == "observed_same_day_incident"
+                   for event in responses)
+    untreated = summaries["none"]
+    protected = summaries["safety_plan"]
+    assert untreated["target_ids"] == protected["target_ids"] == ["s004"]
+    assert len(protected["daily_trajectory"]) == 10
+    assert len(protected["target_trajectories"]["s004"]) == 10
+    assert protected["incident_count"] <= untreated["incident_count"]
+    assert protected["target_metrics"]["safety"]["final_mean"] >= (
+        untreated["target_metrics"]["safety"]["final_mean"])
+    for strategy, summary in summaries.items():
+        assert summary["teacher_strategy"] == strategy
+        assert summary["teacher_response_count"] == summary["incident_count"]
+        assert summary["intervention_count"] == (
+            0 if strategy == "none" else summary["incident_count"])
+
+
+def test_bullying_batch_evidence_pairs_teacher_strategies_by_seed(tmp_path):
+    import asyncio
+
+    from society0.kernel.runner import run_plan
+
+    from campus_sim.analysis import export
+    from campus_sim.analysis_agent import batch_evidence
+    from campus_sim.plan import build
+    from campus_sim.web import build_batch_plan
+
+    data = {"comparison_axis": "bullying_teacher", "scenario": "school_bullying",
+            "teacher_strategies": ["none", "safety_plan"],
+            "condition": "baseline", "seeds": [11], "n_students": 5,
+            "n_staff": 2, "days": 4, "periods_per_day": 1, "capacity": 3,
+            "open_every": 1, "access_barrier": 0.22, "outreach_day": 5}
+    plan = build_batch_plan(Path(__file__).resolve().parents[1], data)
+    root = tmp_path / "comparison"
+    for item in plan["runs"]:
+        path = root / item["name"]
+        asyncio.run(run_plan(path, build(item["config"])))
+        export(path)
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(json.dumps(plan), encoding="utf-8")
+    packet = batch_evidence(root, plan_path)
+    assert packet["metadata"]["shared_config"]["scenario"] == "school_bullying"
+    assert any("同种子配对差" in item["label"] for item in packet["evidence"])
+
+
 def test_social_competition_records_daily_choices_class_elections_and_metrics(tmp_path):
     import asyncio
 
